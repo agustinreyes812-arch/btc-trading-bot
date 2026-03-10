@@ -102,7 +102,7 @@ def analisis_tactico():
     }
 
 # =============================
-# ORDER BOOK PROFUNDO
+# ORDER BOOK
 # =============================
 
 def analizar_orderbook():
@@ -124,28 +124,6 @@ def analizar_orderbook():
         "muro_compra": muro_compra,
         "muro_venta": muro_venta
     }
-
-# =============================
-# OPEN INTEREST ACTUAL
-# =============================
-
-def obtener_open_interest():
-
-    try:
-
-        url = "https://fapi.binance.com/fapi/v1/openInterest"
-
-        params = {"symbol": "BTCUSDT"}
-
-        r = requests.get(url, params=params)
-
-        data = r.json()
-
-        return float(data["openInterest"])
-
-    except:
-
-        return 0
 
 # =============================
 # OPEN INTEREST HISTORICO
@@ -204,6 +182,73 @@ def obtener_funding():
         return 0
 
 # =============================
+# DETECTOR SWEEP
+# =============================
+
+def detectar_sweep():
+
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=10)
+
+    lows = [v[3] for v in velas]
+    highs = [v[2] for v in velas]
+
+    ultimo_low = lows[-1]
+    ultimo_high = highs[-1]
+
+    min_anterior = min(lows[:-1])
+    max_anterior = max(highs[:-1])
+
+    sweep_abajo = ultimo_low < min_anterior
+    sweep_arriba = ultimo_high > max_anterior
+
+    return sweep_abajo, sweep_arriba
+
+# =============================
+# DETECTOR VOLUMEN ANOMALO
+# =============================
+
+def detectar_volumen_anomalo():
+
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=30)
+
+    volumenes = [v[5] for v in velas]
+
+    volumen_actual = volumenes[-1]
+
+    volumen_promedio = sum(volumenes[:-1]) / (len(volumenes) - 1)
+
+    if volumen_actual > volumen_promedio * 2:
+
+        return True
+
+    return False
+
+# =============================
+# DETECTOR SQUEEZE
+# =============================
+
+def detectar_squeeze():
+
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=3)
+
+    precio_actual = velas[-1][4]
+    precio_anterior = velas[-2][4]
+
+    movimiento = precio_actual - precio_anterior
+
+    oi_actual, oi_cambio = obtener_open_interest_historial()
+
+    if movimiento > 0 and oi_cambio < 0:
+
+        return "short_squeeze"
+
+    if movimiento < 0 and oi_cambio < 0:
+
+        return "long_squeeze"
+
+    return None
+
+# =============================
 # MOTOR DE DECISION
 # =============================
 
@@ -219,65 +264,59 @@ def generar_senal():
 
     funding = obtener_funding()
 
+    sweep_abajo, sweep_arriba = detectar_sweep()
+
+    volumen_anomalo = detectar_volumen_anomalo()
+
+    squeeze = detectar_squeeze()
+
     precio = contexto["precio"]
-
-    cerca_min = precio <= contexto["min"] + contexto["rango"] * 0.2
-
-    cerca_max = precio >= contexto["max"] - contexto["rango"] * 0.2
 
     presion_compra = orderbook["bids"] > orderbook["asks"]
 
     presion_venta = orderbook["asks"] > orderbook["bids"]
 
-    momentum_up = tactico["cambio_1m"] > 0 and tactico["cambio_5m"] > 0
+    mensaje = None
 
-    momentum_down = tactico["cambio_1m"] < 0 and tactico["cambio_5m"] < 0
-
-    oi_subiendo = oi_cambio > 0
-
-    # LONG
-
-    if cerca_min and presion_compra and momentum_up and oi_subiendo:
+    if sweep_abajo and volumen_anomalo and presion_compra:
 
         mensaje = f"""
 POSIBLE LONG BTC
 
 Precio: {precio}
 
-Contexto: soporte 2h
-Momentum: alcista
+Barrido de liquidez abajo
+Volumen institucional detectado
 Compradores dominan orderbook
 
 Open Interest: {oi_actual}
-Cambio OI: {oi_cambio}
-
 Funding: {funding}
+
+Squeeze: {squeeze}
 
 Muro compra: {orderbook['muro_compra']}
 """
 
-        enviar_telegram(mensaje)
-
-    # SHORT
-
-    elif cerca_max and presion_venta and momentum_down and oi_subiendo:
+    elif sweep_arriba and volumen_anomalo and presion_venta:
 
         mensaje = f"""
 POSIBLE SHORT BTC
 
 Precio: {precio}
 
-Contexto: resistencia 2h
-Momentum: bajista
+Barrido de liquidez arriba
+Volumen institucional detectado
 Vendedores dominan orderbook
 
 Open Interest: {oi_actual}
-Cambio OI: {oi_cambio}
-
 Funding: {funding}
+
+Squeeze: {squeeze}
 
 Muro venta: {orderbook['muro_venta']}
 """
+
+    if mensaje:
 
         enviar_telegram(mensaje)
 
