@@ -45,7 +45,7 @@ def obtener_velas():
     return velas
 
 # =============================
-# ANALISIS CONTEXTO 2 HORAS
+# ANALISIS CONTEXTO (2H)
 # =============================
 
 def analisis_contexto():
@@ -126,7 +126,7 @@ def analizar_orderbook():
     }
 
 # =============================
-# OPEN INTEREST HISTORICO
+# OPEN INTEREST
 # =============================
 
 def obtener_open_interest_historial():
@@ -217,11 +217,7 @@ def detectar_volumen_anomalo():
 
     volumen_promedio = sum(volumenes[:-1]) / (len(volumenes) - 1)
 
-    if volumen_actual > volumen_promedio * 2:
-
-        return True
-
-    return False
+    return volumen_actual > volumen_promedio * 2
 
 # =============================
 # DETECTOR SQUEEZE
@@ -240,13 +236,69 @@ def detectar_squeeze():
 
     if movimiento > 0 and oi_cambio < 0:
 
-        return "short_squeeze"
+        return "SHORT SQUEEZE"
 
     if movimiento < 0 and oi_cambio < 0:
 
-        return "long_squeeze"
+        return "LONG SQUEEZE"
 
-    return None
+    return "NONE"
+
+# =============================
+# ZONAS DE LIQUIDACION
+# =============================
+
+def detectar_zonas_liquidacion():
+
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=50)
+
+    highs = [v[2] for v in velas]
+    lows = [v[3] for v in velas]
+
+    maximo = max(highs)
+    minimo = min(lows)
+
+    rango = maximo - minimo
+
+    zona_liq_shorts = maximo + rango * 0.15
+    zona_liq_longs = minimo - rango * 0.15
+
+    return zona_liq_shorts, zona_liq_longs
+
+# =============================
+# MOTOR DE PROBABILIDAD
+# =============================
+
+def calcular_probabilidad(presion_compra, presion_venta, volumen_anomalo, sweep_abajo, sweep_arriba):
+
+    score_long = 0
+    score_short = 0
+
+    if presion_compra:
+        score_long += 1
+
+    if presion_venta:
+        score_short += 1
+
+    if volumen_anomalo:
+        score_long += 1
+        score_short += 1
+
+    if sweep_abajo:
+        score_long += 2
+
+    if sweep_arriba:
+        score_short += 2
+
+    total = score_long + score_short
+
+    if total == 0:
+        return 50, 50
+
+    prob_long = int((score_long / total) * 100)
+    prob_short = int((score_short / total) * 100)
+
+    return prob_long, prob_short
 
 # =============================
 # MOTOR DE DECISION
@@ -270,55 +322,50 @@ def generar_senal():
 
     squeeze = detectar_squeeze()
 
+    zona_short, zona_long = detectar_zonas_liquidacion()
+
     precio = contexto["precio"]
 
     presion_compra = orderbook["bids"] > orderbook["asks"]
 
     presion_venta = orderbook["asks"] > orderbook["bids"]
 
-    mensaje = None
+    prob_long, prob_short = calcular_probabilidad(
+        presion_compra,
+        presion_venta,
+        volumen_anomalo,
+        sweep_abajo,
+        sweep_arriba
+    )
 
-    if sweep_abajo and volumen_anomalo and presion_compra:
+    mensaje = f"""
+BTC MARKET RADAR
 
-        mensaje = f"""
-POSIBLE LONG BTC
+Precio actual: {precio}
 
-Precio: {precio}
+Probabilidad LONG: {prob_long}%
+Probabilidad SHORT: {prob_short}%
 
-Barrido de liquidez abajo
-Volumen institucional detectado
-Compradores dominan orderbook
+Funding Rate: {funding}
 
 Open Interest: {oi_actual}
-Funding: {funding}
+Cambio OI: {oi_cambio}
 
-Squeeze: {squeeze}
+Sweep abajo: {sweep_abajo}
+Sweep arriba: {sweep_arriba}
+
+Volumen institucional: {volumen_anomalo}
+
+Squeeze detectado: {squeeze}
+
+Zona liquidacion shorts: {zona_short}
+Zona liquidacion longs: {zona_long}
 
 Muro compra: {orderbook['muro_compra']}
-"""
-
-    elif sweep_arriba and volumen_anomalo and presion_venta:
-
-        mensaje = f"""
-POSIBLE SHORT BTC
-
-Precio: {precio}
-
-Barrido de liquidez arriba
-Volumen institucional detectado
-Vendedores dominan orderbook
-
-Open Interest: {oi_actual}
-Funding: {funding}
-
-Squeeze: {squeeze}
-
 Muro venta: {orderbook['muro_venta']}
 """
 
-    if mensaje:
-
-        enviar_telegram(mensaje)
+    enviar_telegram(mensaje)
 
 # =============================
 # LOOP PRINCIPAL
