@@ -5,17 +5,28 @@ import statistics
 import math
 
 # =========================
-# CONFIG
+# CONFIGURACION
 # =========================
+
+API_KEY = "TU_API_KEY"
+API_SECRET = "TU_SECRET"
 
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 
-TELEGRAM_TOKEN = "TU_TOKEN_AQUI"
-TELEGRAM_CHAT_ID = "TU_CHAT_ID_AQUI"
+TRADE_SIZE = 0.001
+
+STOP_LOSS = 0.0015
+TAKE_PROFIT = 0.003
+
+TELEGRAM_TOKEN = "TU_TOKEN"
+TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 
 exchange = ccxt.binance({
-    "enableRateLimit": True
+    "apiKey": API_KEY,
+    "secret": API_SECRET,
+    "enableRateLimit": True,
+    "options": {"defaultType": "future"}
 })
 
 # =========================
@@ -38,6 +49,17 @@ def enviar(msg):
 
 
 # =========================
+# PRECIO
+# =========================
+
+def precio():
+
+    ticker = exchange.fetch_ticker(SYMBOL)
+
+    return ticker["last"]
+
+
+# =========================
 # VELAS
 # =========================
 
@@ -56,20 +78,20 @@ def contexto():
 
     closes = [x[4] for x in v]
 
-    precio = closes[-1]
+    precio_actual = closes[-1]
 
     media = statistics.mean(closes)
 
-    if precio > media:
+    if precio_actual > media:
         tendencia = "ALCISTA"
 
-    elif precio < media:
+    elif precio_actual < media:
         tendencia = "BAJISTA"
 
     else:
         tendencia = "NEUTRAL"
 
-    return precio, tendencia
+    return precio_actual, tendencia
 
 
 # =========================
@@ -116,63 +138,25 @@ def modelo_orderbook():
 
 
 # =========================
-# SPOOFING DETECTOR
+# MICRO MOVIMIENTO
 # =========================
 
-def spoofing():
+def micro_movimiento():
 
-    book = exchange.fetch_order_book(SYMBOL, limit=50)
+    v = velas(3)
 
-    bids = book["bids"]
-    asks = book["asks"]
+    p1 = v[-2][4]
+    p2 = v[-1][4]
 
-    grandes_bids = [b for b in bids if b[1] > 20]
-    grandes_asks = [a for a in asks if a[1] > 20]
+    cambio = (p2 - p1) / p1
 
-    if len(grandes_bids) > 5:
-        return "SPOOFING_COMPRA"
+    if cambio > 0.0015:
+        return "UP"
 
-    if len(grandes_asks) > 5:
-        return "SPOOFING_VENTA"
-
-    return "NORMAL"
-
-
-# =========================
-# SWEEP LIQUIDEZ
-# =========================
-
-def sweep():
-
-    v = velas(15)
-
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
-
-    if highs[-1] > max(highs[:-1]):
-        return "SHORT_LIQUIDATED"
-
-    if lows[-1] < min(lows[:-1]):
-        return "LONG_LIQUIDATED"
+    if cambio < -0.0015:
+        return "DOWN"
 
     return "NONE"
-
-
-# =========================
-# MODELO LIQUIDEZ
-# =========================
-
-def modelo_liquidez():
-
-    s = sweep()
-
-    if s == "SHORT_LIQUIDATED":
-        return "LONG"
-
-    if s == "LONG_LIQUIDATED":
-        return "SHORT"
-
-    return "NEUTRAL"
 
 
 # =========================
@@ -210,44 +194,56 @@ def modelo_estadistico():
 
 
 # =========================
-# MAPA LIQUIDACIONES
+# ESTIMADOR DE MOVIMIENTO
 # =========================
 
-def mapa_liquidaciones():
+def estimar_movimiento():
 
     v = velas(120)
 
     highs = [x[2] for x in v]
     lows = [x[3] for x in v]
+    closes = [x[4] for x in v]
+    vols = [x[5] for x in v]
 
-    maximo = max(highs)
-    minimo = min(lows)
+    precio_actual = closes[-1]
 
-    rango = maximo - minimo
+    rangos = []
 
-    zona_shorts = maximo + rango * 0.25
-    zona_longs = minimo - rango * 0.25
+    for i in range(len(highs)):
+        rangos.append(highs[i] - lows[i])
 
-    return zona_shorts, zona_longs
+    atr = statistics.mean(rangos)
 
+    volatilidad = atr / precio_actual
 
-# =========================
-# CLUSTER LIQUIDACIONES
-# =========================
+    impulso = (closes[-1] - closes[-10]) / closes[-10]
 
-def cluster_liquidaciones():
+    vol_actual = vols[-1]
+    vol_prom = statistics.mean(vols)
 
-    v = velas(200)
+    factor_vol = vol_actual / vol_prom
 
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
+    movimiento = abs(volatilidad * 2 + impulso * factor_vol)
 
-    rango = max(highs) - min(lows)
+    porcentaje = movimiento * 100
 
-    cluster_up = max(highs) + rango * 0.15
-    cluster_down = min(lows) - rango * 0.15
+    if porcentaje < 0.15:
+        tipo = "SIN MOVIMIENTO"
 
-    return cluster_up, cluster_down
+    elif porcentaje < 0.5:
+        tipo = "MICRO SCALP"
+
+    elif porcentaje < 2:
+        tipo = "SCALPING MEDIO"
+
+    elif porcentaje < 5:
+        tipo = "MOVIMIENTO FUERTE"
+
+    else:
+        tipo = "MOVIMIENTO GRANDE"
+
+    return round(porcentaje, 2), tipo
 
 
 # =========================
@@ -261,12 +257,11 @@ def decision():
 
     m1 = modelo_momentum()
     m2 = modelo_orderbook()
-    m3 = modelo_liquidez()
-    m4, prob = modelo_estadistico()
+    m3, prob = modelo_estadistico()
 
-    spoof = spoofing()
+    micro = micro_movimiento()
 
-    modelos = [m1, m2, m3, m4]
+    modelos = [m1, m2, m3]
 
     for m in modelos:
 
@@ -276,22 +271,47 @@ def decision():
         if m == "SHORT":
             votos_short += 1
 
-    if spoof == "SPOOFING_VENTA":
+    if micro == "UP":
         votos_long += 1
 
-    if spoof == "SPOOFING_COMPRA":
+    if micro == "DOWN":
         votos_short += 1
 
-    if votos_long >= 3 and prob > 70:
-        señal = "LONG FUERTE"
+    if votos_long >= 2 and prob > 60:
+        return "LONG"
 
-    elif votos_short >= 3 and prob > 70:
-        señal = "SHORT FUERTE"
+    if votos_short >= 2 and prob > 60:
+        return "SHORT"
 
-    else:
-        señal = "SIN SEÑAL"
+    return "NONE"
 
-    return señal, prob
+
+# =========================
+# OPERACIONES
+# =========================
+
+def abrir_long():
+
+    p = precio()
+
+    sl = p * (1 - STOP_LOSS)
+    tp = p * (1 + TAKE_PROFIT)
+
+    exchange.create_market_buy_order(SYMBOL, TRADE_SIZE)
+
+    enviar(f"LONG ABIERTO\nPrecio: {p}\nSL: {sl}\nTP: {tp}")
+
+
+def abrir_short():
+
+    p = precio()
+
+    sl = p * (1 + STOP_LOSS)
+    tp = p * (1 - TAKE_PROFIT)
+
+    exchange.create_market_sell_order(SYMBOL, TRADE_SIZE)
+
+    enviar(f"SHORT ABIERTO\nPrecio: {p}\nSL: {sl}\nTP: {tp}")
 
 
 # =========================
@@ -300,33 +320,25 @@ def decision():
 
 def reporte():
 
-    precio, tendencia = contexto()
+    precio_actual, tendencia = contexto()
 
-    señal, prob = decision()
+    señal = decision()
 
-    zona_shorts, zona_longs = mapa_liquidaciones()
-
-    cluster_up, cluster_down = cluster_liquidaciones()
+    mov, tipo = estimar_movimiento()
 
     msg = f"""
 
 BTC QUANT ENGINE
 
-Precio: {precio}
+Precio: {precio_actual}
 
-Tendencia 2H: {tendencia}
+Tendencia: {tendencia}
 
-SEÑAL: {señal}
+Movimiento esperado: {mov} %
 
-Probabilidad modelo: {prob}%
+Tipo de oportunidad: {tipo}
 
-Zona liquidación shorts: {zona_shorts}
-
-Zona liquidación longs: {zona_longs}
-
-Cluster liquidación arriba: {cluster_up}
-
-Cluster liquidación abajo: {cluster_down}
+Señal: {señal}
 
 """
 
@@ -334,18 +346,32 @@ Cluster liquidación abajo: {cluster_down}
 
     enviar(msg)
 
+    return señal
+
 
 # =========================
-# LOOP
+# LOOP PRINCIPAL
 # =========================
 
-print("BOT CUANTITATIVO INICIADO")
+print("BOT DE TRADING CUANTITATIVO INICIADO")
 
 while True:
 
     try:
 
-        reporte()
+        señal = reporte()
+
+        if señal == "LONG":
+
+            abrir_long()
+
+            time.sleep(120)
+
+        elif señal == "SHORT":
+
+            abrir_short()
+
+            time.sleep(120)
 
         time.sleep(30)
 
