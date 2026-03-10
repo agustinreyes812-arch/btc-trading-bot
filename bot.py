@@ -4,10 +4,6 @@ import time
 import statistics
 import math
 
-# =========================
-# CONFIG
-# =========================
-
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 
@@ -47,7 +43,7 @@ def velas(n):
 
 
 # =========================
-# CONTEXTO 2H
+# CONTEXTO
 # =========================
 
 def contexto():
@@ -62,8 +58,10 @@ def contexto():
 
     if precio > media:
         tendencia = "ALCISTA"
+
     elif precio < media:
         tendencia = "BAJISTA"
+
     else:
         tendencia = "NEUTRAL"
 
@@ -76,16 +74,16 @@ def contexto():
 
 def momentum():
 
-    v = velas(5)
+    v = velas(6)
 
-    c1 = v[-1][4] - v[-2][4]
-    c5 = v[-1][4] - v[0][4]
+    cambio1 = v[-1][4] - v[-2][4]
+    cambio5 = v[-1][4] - v[0][4]
 
-    return c1, c5
+    return cambio1, cambio5
 
 
 # =========================
-# ORDERBOOK
+# ORDER BOOK
 # =========================
 
 def orderbook():
@@ -98,67 +96,52 @@ def orderbook():
     vol_bids = sum([b[1] for b in bids])
     vol_asks = sum([a[1] for a in asks])
 
-    presion = "NEUTRAL"
-
     if vol_bids > vol_asks:
-        presion = "COMPRADORES"
+        return "COMPRADORES"
 
     if vol_asks > vol_bids:
-        presion = "VENDEDORES"
+        return "VENDEDORES"
 
-    return presion
-
-
-# =========================
-# OPEN INTEREST
-# =========================
-
-def open_interest():
-
-    try:
-
-        url = "https://fapi.binance.com/futures/data/openInterestHist"
-
-        params = {
-            "symbol":"BTCUSDT",
-            "period":"5m",
-            "limit":2
-        }
-
-        r = requests.get(url, params=params)
-
-        data = r.json()
-
-        actual = float(data[-1]["sumOpenInterest"])
-        anterior = float(data[-2]["sumOpenInterest"])
-
-        cambio = actual - anterior
-
-        return actual, cambio
-
-    except:
-
-        return 0,0
+    return "NEUTRAL"
 
 
 # =========================
-# SWEEP
+# SWEEP LIQUIDEZ
 # =========================
 
 def sweep():
 
-    v = velas(12)
+    v = velas(15)
 
     highs = [x[2] for x in v]
     lows = [x[3] for x in v]
 
     if highs[-1] > max(highs[:-1]):
-        return "SHORT_LIQUIDITY"
+
+        return "LIQUIDAR SHORTS"
 
     if lows[-1] < min(lows[:-1]):
-        return "LONG_LIQUIDITY"
 
-    return "NONE"
+        return "LIQUIDAR LONGS"
+
+    return "NINGUNO"
+
+
+# =========================
+# ZONAS INSTITUCIONALES
+# =========================
+
+def zonas_institucionales():
+
+    v = velas(80)
+
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
+
+    zona_alta = max(highs)
+    zona_baja = min(lows)
+
+    return zona_alta, zona_baja
 
 
 # =========================
@@ -173,7 +156,59 @@ def volumen_institucional():
 
     promedio = statistics.mean(vols[:-1])
 
-    return vols[-1] > promedio * 2
+    if vols[-1] > promedio * 2:
+
+        return True
+
+    return False
+
+
+# =========================
+# ABSORCION
+# =========================
+
+def absorcion():
+
+    v = velas(5)
+
+    precios = [x[4] for x in v]
+    vols = [x[5] for x in v]
+
+    cambio = abs(precios[-1] - precios[0])
+
+    volumen = sum(vols)
+
+    if cambio < 10 and volumen > statistics.mean(vols)*3:
+
+        return True
+
+    return False
+
+
+# =========================
+# MARKET MAKER TRAP
+# =========================
+
+def manipulacion():
+
+    v = velas(7)
+
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
+    closes = [x[4] for x in v]
+
+    bull_trap = False
+    bear_trap = False
+
+    if highs[-1] > max(highs[:-1]) and closes[-1] < closes[-2]:
+
+        bull_trap = True
+
+    if lows[-1] < min(lows[:-1]) and closes[-1] > closes[-2]:
+
+        bear_trap = True
+
+    return bull_trap, bear_trap
 
 
 # =========================
@@ -196,30 +231,34 @@ def modelo_ml():
 
     desviacion = statistics.stdev(cambios)
 
-    ultimo_cambio = cambios[-1]
+    ultimo = cambios[-1]
 
-    z = (ultimo_cambio - media) / desviacion if desviacion != 0 else 0
+    z = (ultimo-media)/desviacion if desviacion != 0 else 0
 
-    prob_up = 1 / (1 + math.exp(-z))
+    prob_up = 1/(1+math.exp(-z))
 
-    prob_down = 1 - prob_up
+    prob_down = 1-prob_up
 
-    return round(prob_up*100), round(prob_down*100)
+    return int(prob_up*100), int(prob_down*100)
 
 
 # =========================
-# MOTOR PREDICCION
+# MOTOR DE DECISION
 # =========================
 
-def prediccion():
+def decision():
 
     c1,c5 = momentum()
-
-    prob_up,prob_down = modelo_ml()
 
     presion = orderbook()
 
     inst = volumen_institucional()
+
+    absorb = absorcion()
+
+    bull,bear = manipulacion()
+
+    prob_up,prob_down = modelo_ml()
 
     score = 0
 
@@ -229,22 +268,31 @@ def prediccion():
     if c5 > 0:
         score += 1
 
-    if prob_up > prob_down:
-        score += 1
-
     if presion == "COMPRADORES":
         score += 1
 
     if inst:
         score += 1
 
-    if score >= 4:
-        return "LONG SCALP"
+    if absorb:
+        score += 1
 
-    if score <= 2:
-        return "SHORT SCALP"
+    if prob_up > prob_down:
+        score += 1
 
-    return "NEUTRAL"
+    if bull:
+        score -= 2
+
+    if bear:
+        score += 2
+
+    if score >= 5:
+        return "ENTRADA LONG"
+
+    if score <= 1:
+        return "ENTRADA SHORT"
+
+    return "SIN SEÑAL"
 
 
 # =========================
@@ -257,48 +305,53 @@ def reporte():
 
     presion = orderbook()
 
-    oi,oi_cambio = open_interest()
-
     sw = sweep()
+
+    zona_alta,zona_baja = zonas_institucionales()
 
     inst = volumen_institucional()
 
+    absorb = absorcion()
+
+    bull,bear = manipulacion()
+
     prob_up,prob_down = modelo_ml()
 
-    pred = prediccion()
+    señal = decision()
 
     msg = f"""
 
-BTC AI TRADING RADAR
+BTC QUANT RADAR
 
 Precio: {precio}
 
 Tendencia 2H: {tendencia}
 
-Predicción: {pred}
+SEÑAL: {señal}
 
-Prob subida (ML): {prob_up}%
-Prob bajada (ML): {prob_down}%
+Prob subida: {prob_up}%
+Prob bajada: {prob_down}%
 
-Presión orderbook: {presion}
+Presión mercado: {presion}
 
 Sweep liquidez: {sw}
 
-Open Interest: {oi}
-Cambio OI: {oi_cambio}
-
 Volumen institucional: {inst}
+
+Absorción: {absorb}
+
+Bull trap: {bull}
+Bear trap: {bear}
+
+Zona institucional alta: {zona_alta}
+Zona institucional baja: {zona_baja}
 
 """
 
     enviar(msg)
 
 
-# =========================
-# LOOP
-# =========================
-
-print("BOT AI TRADING INICIADO")
+print("BOT CUANTITATIVO ACTIVO")
 
 while True:
 
@@ -310,6 +363,6 @@ while True:
 
     except Exception as e:
 
-        print("Error:",e)
+        print(e)
 
         time.sleep(30)
