@@ -17,7 +17,6 @@ exchange = ccxt.binance({
     "enableRateLimit": True
 })
 
-
 # =========================
 # TELEGRAM
 # =========================
@@ -58,9 +57,6 @@ def contexto():
     lows = [x[3] for x in v]
     closes = [x[4] for x in v]
 
-    maximo = max(highs)
-    minimo = min(lows)
-
     precio = closes[-1]
 
     media = statistics.mean(closes)
@@ -73,7 +69,7 @@ def contexto():
     if precio < media:
         tendencia = "BAJISTA"
 
-    return precio, maximo, minimo, tendencia
+    return precio, tendencia
 
 
 # =========================
@@ -84,13 +80,10 @@ def momentum():
 
     v = velas(5)
 
-    cierre_actual = v[-1][4]
-    cierre_prev = v[-2][4]
+    c1 = v[-1][4] - v[-2][4]
+    c5 = v[-1][4] - v[0][4]
 
-    cambio_1m = cierre_actual - cierre_prev
-    cambio_5m = cierre_actual - v[0][4]
-
-    return cambio_1m, cambio_5m
+    return c1, c5
 
 
 # =========================
@@ -104,21 +97,44 @@ def orderbook():
     bids = book["bids"]
     asks = book["asks"]
 
-    volumen_bids = sum([b[1] for b in bids])
-    volumen_asks = sum([a[1] for a in asks])
-
-    muro_compra = max(bids, key=lambda x: x[1])
-    muro_venta = max(asks, key=lambda x: x[1])
+    vol_bids = sum([b[1] for b in bids])
+    vol_asks = sum([a[1] for a in asks])
 
     presion = "NEUTRAL"
 
-    if volumen_bids > volumen_asks:
+    if vol_bids > vol_asks:
         presion = "COMPRADORES"
 
-    if volumen_asks > volumen_bids:
+    if vol_asks > vol_bids:
         presion = "VENDEDORES"
 
-    return presion, muro_compra, muro_venta
+    return presion, bids, asks
+
+
+# =========================
+# DETECTOR DE BALLENAS
+# =========================
+
+def detectar_ballenas():
+
+    presion, bids, asks = orderbook()
+
+    whale_buy = None
+    whale_sell = None
+
+    for b in bids:
+
+        if b[1] > 50:   # tamaño grande BTC
+            whale_buy = b
+            break
+
+    for a in asks:
+
+        if a[1] > 50:
+            whale_sell = a
+            break
+
+    return whale_buy, whale_sell
 
 
 # =========================
@@ -154,7 +170,7 @@ def open_interest():
 
 
 # =========================
-# FUNDING
+# FUNDING RATE
 # =========================
 
 def funding():
@@ -187,16 +203,13 @@ def sweep():
     highs = [x[2] for x in v]
     lows = [x[3] for x in v]
 
-    ultimo_high = highs[-1]
-    ultimo_low = lows[-1]
+    if highs[-1] > max(highs[:-1]):
+        return "SWEEP SHORTS"
 
-    max_prev = max(highs[:-1])
-    min_prev = min(lows[:-1])
+    if lows[-1] < min(lows[:-1]):
+        return "SWEEP LONGS"
 
-    sweep_up = ultimo_high > max_prev
-    sweep_down = ultimo_low < min_prev
-
-    return sweep_up, sweep_down
+    return "NINGUNO"
 
 
 # =========================
@@ -207,92 +220,34 @@ def volumen_institucional():
 
     v = velas(30)
 
-    volumenes = [x[5] for x in v]
+    vols = [x[5] for x in v]
 
-    promedio = statistics.mean(volumenes[:-1])
-    actual = volumenes[-1]
+    promedio = statistics.mean(vols[:-1])
 
-    return actual > promedio * 2
+    if vols[-1] > promedio * 2:
+        return True
 
-
-# =========================
-# TRAMPAS
-# =========================
-
-def trampas():
-
-    v = velas(6)
-
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
-    closes = [x[4] for x in v]
-
-    bull_trap = False
-    bear_trap = False
-
-    if highs[-1] > max(highs[:-1]) and closes[-1] < closes[-2]:
-        bull_trap = True
-
-    if lows[-1] < min(lows[:-1]) and closes[-1] > closes[-2]:
-        bear_trap = True
-
-    return bull_trap, bear_trap
+    return False
 
 
 # =========================
-# DIVERGENCIA PRECIO VS OI
+# MANIPULACION
 # =========================
 
-def divergencia():
+def manipulacion():
 
-    v = velas(3)
+    c1, c5 = momentum()
 
-    precio_actual = v[-1][4]
-    precio_prev = v[-2][4]
+    inst = volumen_institucional()
 
-    oi_actual, oi_cambio = open_interest()
+    if abs(c1) > 50 and inst:
+        return "POSIBLE MANIPULACION"
 
-    mov = precio_actual - precio_prev
-
-    if mov > 0 and oi_cambio < 0:
-        return "SHORTS CERRANDO"
-
-    if mov < 0 and oi_cambio < 0:
-        return "LONGS CERRANDO"
-
-    if mov > 0 and oi_cambio > 0:
-        return "NUEVOS LONGS"
-
-    if mov < 0 and oi_cambio > 0:
-        return "NUEVOS SHORTS"
-
-    return "NEUTRAL"
+    return "NORMAL"
 
 
 # =========================
-# MAPA LIQUIDACIONES
-# =========================
-
-def mapa_liquidaciones():
-
-    v = velas(80)
-
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
-
-    maximo = max(highs)
-    minimo = min(lows)
-
-    rango = maximo - minimo
-
-    zona_liq_short = maximo + rango * 0.25
-    zona_liq_long = minimo - rango * 0.25
-
-    return zona_liq_short, zona_liq_long
-
-
-# =========================
-# MODELO PROBABILIDAD
+# PROBABILIDAD
 # =========================
 
 def probabilidad():
@@ -313,14 +268,11 @@ def probabilidad():
 
     total = up + down
 
-    prob_up = int((up/total)*100)
-    prob_down = int((down/total)*100)
-
-    return prob_up, prob_down
+    return int(up/total*100), int(down/total*100)
 
 
 # =========================
-# MOTOR DE PREDICCION
+# PREDICCION
 # =========================
 
 def prediccion():
@@ -329,7 +281,7 @@ def prediccion():
 
     prob_up,prob_down = probabilidad()
 
-    swu, swd = sweep()
+    sweep_signal = sweep()
 
     inst = volumen_institucional()
 
@@ -344,7 +296,7 @@ def prediccion():
     if prob_up > prob_down:
         score += 1
 
-    if swu:
+    if sweep_signal == "SWEEP SHORTS":
         score += 1
 
     if inst:
@@ -368,25 +320,21 @@ def prediccion():
 
 def reporte():
 
-    precio,maximo,minimo,tendencia = contexto()
+    precio,tendencia = contexto()
 
-    c1,c5 = momentum()
+    presion,bids,asks = orderbook()
 
-    presion,muro_compra,muro_venta = orderbook()
+    whale_buy,whale_sell = detectar_ballenas()
 
-    oi_actual,oi_cambio = open_interest()
+    oi,oi_cambio = open_interest()
 
     fund = funding()
 
-    swu,swd = sweep()
+    sweep_signal = sweep()
 
     inst = volumen_institucional()
 
-    bull,bear = trampas()
-
-    div = divergencia()
-
-    liq_short,liq_long = mapa_liquidaciones()
+    manip = manipulacion()
 
     prob_up,prob_down = probabilidad()
 
@@ -394,7 +342,7 @@ def reporte():
 
     msg = f"""
 
-BTC FUTURES INTEL
+BTC FUTURES AI RADAR
 
 Precio: {precio}
 
@@ -405,31 +353,22 @@ Predicción: {pred}
 Prob subida: {prob_up}%
 Prob bajada: {prob_down}%
 
-Momentum 1m: {c1}
-Momentum 5m: {c5}
-
 Funding: {fund}
 
-Open Interest: {oi_actual}
+Open Interest: {oi}
 Cambio OI: {oi_cambio}
 
-Divergencia: {div}
-
-Sweep arriba: {swu}
-Sweep abajo: {swd}
+Sweep: {sweep_signal}
 
 Volumen institucional: {inst}
 
-Bull trap: {bull}
-Bear trap: {bear}
+Manipulación: {manip}
 
-Presión orderbook: {presion}
+Ballena compra: {whale_buy}
 
-Muro compra: {muro_compra}
-Muro venta: {muro_venta}
+Ballena venta: {whale_sell}
 
-Zona liquidación shorts: {liq_short}
-Zona liquidación longs: {liq_long}
+Presión del mercado: {presion}
 
 """
 
@@ -440,7 +379,7 @@ Zona liquidación longs: {liq_long}
 # LOOP
 # =========================
 
-print("BOT PROFESIONAL INICIADO")
+print("BOT CUANTITATIVO INICIADO")
 
 while True:
 
@@ -452,6 +391,6 @@ while True:
 
     except Exception as e:
 
-        print("Error:",e)
+        print("Error:", e)
 
         time.sleep(30)
