@@ -4,7 +4,7 @@ import time
 import statistics
 
 # =========================
-# CONFIGURACION
+# CONFIG
 # =========================
 
 SYMBOL = "BTC/USDT"
@@ -17,11 +17,12 @@ exchange = ccxt.binance({
     "enableRateLimit": True
 })
 
+
 # =========================
 # TELEGRAM
 # =========================
 
-def enviar_telegram(msg):
+def enviar(msg):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
@@ -37,12 +38,12 @@ def enviar_telegram(msg):
 
 
 # =========================
-# OBTENER VELAS
+# VELAS
 # =========================
 
-def velas(l):
+def velas(n):
 
-    return exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=l)
+    return exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=n)
 
 
 # =========================
@@ -53,21 +54,18 @@ def contexto():
 
     v = velas(120)
 
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
     closes = [x[4] for x in v]
 
     precio = closes[-1]
 
     media = statistics.mean(closes)
 
-    tendencia = "NEUTRAL"
-
     if precio > media:
         tendencia = "ALCISTA"
-
-    if precio < media:
+    elif precio < media:
         tendencia = "BAJISTA"
+    else:
+        tendencia = "NEUTRAL"
 
     return precio, tendencia
 
@@ -112,25 +110,25 @@ def orderbook():
 
 
 # =========================
-# DETECTOR DE BALLENAS
+# BALLENAS
 # =========================
 
-def detectar_ballenas():
+def ballenas():
 
-    presion, bids, asks = orderbook()
+    presion,bids,asks = orderbook()
 
     whale_buy = None
     whale_sell = None
 
     for b in bids:
 
-        if b[1] > 50:   # tamaño grande BTC
+        if b[1] > 40:
             whale_buy = b
             break
 
     for a in asks:
 
-        if a[1] > 50:
+        if a[1] > 40:
             whale_sell = a
             break
 
@@ -148,9 +146,9 @@ def open_interest():
         url = "https://fapi.binance.com/futures/data/openInterestHist"
 
         params = {
-            "symbol": "BTCUSDT",
-            "period": "5m",
-            "limit": 2
+            "symbol":"BTCUSDT",
+            "period":"5m",
+            "limit":2
         }
 
         r = requests.get(url, params=params)
@@ -170,7 +168,7 @@ def open_interest():
 
 
 # =========================
-# FUNDING RATE
+# FUNDING
 # =========================
 
 def funding():
@@ -198,7 +196,7 @@ def funding():
 
 def sweep():
 
-    v = velas(10)
+    v = velas(12)
 
     highs = [x[2] for x in v]
     lows = [x[3] for x in v]
@@ -224,26 +222,74 @@ def volumen_institucional():
 
     promedio = statistics.mean(vols[:-1])
 
-    if vols[-1] > promedio * 2:
+    return vols[-1] > promedio * 2
+
+
+# =========================
+# ABSORCION
+# =========================
+
+def absorcion():
+
+    v = velas(5)
+
+    precios = [x[4] for x in v]
+    vols = [x[5] for x in v]
+
+    cambio = abs(precios[-1] - precios[0])
+
+    vol = sum(vols)
+
+    if cambio < 10 and vol > statistics.mean(vols)*3:
         return True
 
     return False
 
 
 # =========================
-# MANIPULACION
+# TRAMPA DE LIQUIDEZ
 # =========================
 
-def manipulacion():
+def trampa():
 
-    c1, c5 = momentum()
+    v = velas(6)
 
-    inst = volumen_institucional()
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
+    closes = [x[4] for x in v]
 
-    if abs(c1) > 50 and inst:
-        return "POSIBLE MANIPULACION"
+    bull_trap = False
+    bear_trap = False
 
-    return "NORMAL"
+    if highs[-1] > max(highs[:-1]) and closes[-1] < closes[-2]:
+        bull_trap = True
+
+    if lows[-1] < min(lows[:-1]) and closes[-1] > closes[-2]:
+        bear_trap = True
+
+    return bull_trap,bear_trap
+
+
+# =========================
+# MAPA LIQUIDACIONES
+# =========================
+
+def liquidaciones():
+
+    v = velas(80)
+
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
+
+    maximo = max(highs)
+    minimo = min(lows)
+
+    rango = maximo - minimo
+
+    liq_shorts = maximo + rango * 0.2
+    liq_longs = minimo - rango * 0.2
+
+    return liq_shorts, liq_longs
 
 
 # =========================
@@ -272,7 +318,7 @@ def probabilidad():
 
 
 # =========================
-# PREDICCION
+# MODELO PREDICTIVO
 # =========================
 
 def prediccion():
@@ -281,9 +327,11 @@ def prediccion():
 
     prob_up,prob_down = probabilidad()
 
-    sweep_signal = sweep()
+    sw = sweep()
 
     inst = volumen_institucional()
+
+    absorb = absorcion()
 
     score = 0
 
@@ -296,19 +344,22 @@ def prediccion():
     if prob_up > prob_down:
         score += 1
 
-    if sweep_signal == "SWEEP SHORTS":
+    if sw == "SWEEP SHORTS":
         score += 1
 
     if inst:
         score += 1
 
-    if score >= 4:
+    if absorb:
+        score += 1
+
+    if score >= 5:
         return "FUERTE ALZA"
 
-    if score == 3:
+    if score == 4:
         return "ALZA PROBABLE"
 
-    if score <= 2:
+    if score <= 3:
         return "BAJA PROBABLE"
 
     return "NEUTRAL"
@@ -324,17 +375,21 @@ def reporte():
 
     presion,bids,asks = orderbook()
 
-    whale_buy,whale_sell = detectar_ballenas()
+    whale_buy,whale_sell = ballenas()
 
     oi,oi_cambio = open_interest()
 
     fund = funding()
 
-    sweep_signal = sweep()
+    sw = sweep()
 
     inst = volumen_institucional()
 
-    manip = manipulacion()
+    absorb = absorcion()
+
+    bull,bear = trampa()
+
+    liq_s,liq_l = liquidaciones()
 
     prob_up,prob_down = probabilidad()
 
@@ -342,7 +397,7 @@ def reporte():
 
     msg = f"""
 
-BTC FUTURES AI RADAR
+BTC FUTURES INTELLIGENCE
 
 Precio: {precio}
 
@@ -358,28 +413,33 @@ Funding: {fund}
 Open Interest: {oi}
 Cambio OI: {oi_cambio}
 
-Sweep: {sweep_signal}
+Sweep: {sw}
 
 Volumen institucional: {inst}
 
-Manipulación: {manip}
+Absorción institucional: {absorb}
+
+Bull trap: {bull}
+Bear trap: {bear}
 
 Ballena compra: {whale_buy}
-
 Ballena venta: {whale_sell}
 
-Presión del mercado: {presion}
+Presión mercado: {presion}
+
+Zona liquidación shorts: {liq_s}
+Zona liquidación longs: {liq_l}
 
 """
 
-    enviar_telegram(msg)
+    enviar(msg)
 
 
 # =========================
 # LOOP
 # =========================
 
-print("BOT CUANTITATIVO INICIADO")
+print("BOT CUANTITATIVO PRO INICIADO")
 
 while True:
 
@@ -391,6 +451,6 @@ while True:
 
     except Exception as e:
 
-        print("Error:", e)
+        print("Error:",e)
 
         time.sleep(30)
