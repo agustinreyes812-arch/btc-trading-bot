@@ -10,9 +10,7 @@ TIMEFRAME = "1m"
 TELEGRAM_TOKEN = "TU_TOKEN"
 TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 
-exchange = ccxt.binance({
-    "enableRateLimit": True
-})
+exchange = ccxt.binance({"enableRateLimit": True})
 
 # =========================
 # TELEGRAM
@@ -20,15 +18,15 @@ exchange = ccxt.binance({
 
 def enviar(msg):
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    data = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg
+    data={
+        "chat_id":TELEGRAM_CHAT_ID,
+        "text":msg
     }
 
     try:
-        requests.post(url, data=data)
+        requests.post(url,data=data)
     except:
         pass
 
@@ -39,7 +37,7 @@ def enviar(msg):
 
 def velas(n):
 
-    return exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=n)
+    return exchange.fetch_ohlcv(SYMBOL,TIMEFRAME,limit=n)
 
 
 # =========================
@@ -48,59 +46,63 @@ def velas(n):
 
 def contexto():
 
-    v = velas(120)
+    v=velas(120)
 
-    closes = [x[4] for x in v]
+    closes=[x[4] for x in v]
 
-    precio = closes[-1]
+    precio=closes[-1]
 
-    media = statistics.mean(closes)
+    media=statistics.mean(closes)
 
-    if precio > media:
-        tendencia = "ALCISTA"
-
-    elif precio < media:
-        tendencia = "BAJISTA"
-
+    if precio>media:
+        tendencia="ALCISTA"
+    elif precio<media:
+        tendencia="BAJISTA"
     else:
-        tendencia = "NEUTRAL"
+        tendencia="NEUTRAL"
 
-    return precio, tendencia
-
-
-# =========================
-# MOMENTUM
-# =========================
-
-def momentum():
-
-    v = velas(6)
-
-    cambio1 = v[-1][4] - v[-2][4]
-    cambio5 = v[-1][4] - v[0][4]
-
-    return cambio1, cambio5
+    return precio,tendencia
 
 
 # =========================
-# ORDER BOOK
+# MOMENTUM MODEL
 # =========================
 
-def orderbook():
+def modelo_momentum():
 
-    book = exchange.fetch_order_book(SYMBOL, limit=100)
+    v=velas(6)
 
-    bids = book["bids"]
-    asks = book["asks"]
+    c1=v[-1][4]-v[-2][4]
+    c5=v[-1][4]-v[0][4]
 
-    vol_bids = sum([b[1] for b in bids])
-    vol_asks = sum([a[1] for a in asks])
+    if c1>0 and c5>0:
+        return "LONG"
 
-    if vol_bids > vol_asks:
-        return "COMPRADORES"
+    if c1<0 and c5<0:
+        return "SHORT"
 
-    if vol_asks > vol_bids:
-        return "VENDEDORES"
+    return "NEUTRAL"
+
+
+# =========================
+# ORDERBOOK MODEL
+# =========================
+
+def modelo_orderbook():
+
+    book=exchange.fetch_order_book(SYMBOL,limit=100)
+
+    bids=book["bids"]
+    asks=book["asks"]
+
+    vol_bids=sum([b[1] for b in bids])
+    vol_asks=sum([a[1] for a in asks])
+
+    if vol_bids>vol_asks:
+        return "LONG"
+
+    if vol_asks>vol_bids:
+        return "SHORT"
 
     return "NEUTRAL"
 
@@ -111,188 +113,129 @@ def orderbook():
 
 def sweep():
 
-    v = velas(15)
+    v=velas(15)
 
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
+    highs=[x[2] for x in v]
+    lows=[x[3] for x in v]
 
-    if highs[-1] > max(highs[:-1]):
+    if highs[-1]>max(highs[:-1]):
+        return "SHORT_LIQUIDATED"
 
-        return "LIQUIDAR SHORTS"
+    if lows[-1]<min(lows[:-1]):
+        return "LONG_LIQUIDATED"
 
-    if lows[-1] < min(lows[:-1]):
-
-        return "LIQUIDAR LONGS"
-
-    return "NINGUNO"
+    return "NONE"
 
 
 # =========================
-# ZONAS INSTITUCIONALES
+# MODELO LIQUIDEZ
 # =========================
 
-def zonas_institucionales():
+def modelo_liquidez():
 
-    v = velas(80)
+    s=sweep()
 
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
+    if s=="SHORT_LIQUIDATED":
+        return "LONG"
 
-    zona_alta = max(highs)
-    zona_baja = min(lows)
+    if s=="LONG_LIQUIDATED":
+        return "SHORT"
 
-    return zona_alta, zona_baja
-
-
-# =========================
-# VOLUMEN INSTITUCIONAL
-# =========================
-
-def volumen_institucional():
-
-    v = velas(30)
-
-    vols = [x[5] for x in v]
-
-    promedio = statistics.mean(vols[:-1])
-
-    if vols[-1] > promedio * 2:
-
-        return True
-
-    return False
+    return "NEUTRAL"
 
 
 # =========================
-# ABSORCION
+# MODELO ESTADISTICO
 # =========================
 
-def absorcion():
+def modelo_estadistico():
 
-    v = velas(5)
+    v=velas(300)
 
-    precios = [x[4] for x in v]
-    vols = [x[5] for x in v]
+    closes=[x[4] for x in v]
 
-    cambio = abs(precios[-1] - precios[0])
-
-    volumen = sum(vols)
-
-    if cambio < 10 and volumen > statistics.mean(vols)*3:
-
-        return True
-
-    return False
-
-
-# =========================
-# MARKET MAKER TRAP
-# =========================
-
-def manipulacion():
-
-    v = velas(7)
-
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
-    closes = [x[4] for x in v]
-
-    bull_trap = False
-    bear_trap = False
-
-    if highs[-1] > max(highs[:-1]) and closes[-1] < closes[-2]:
-
-        bull_trap = True
-
-    if lows[-1] < min(lows[:-1]) and closes[-1] > closes[-2]:
-
-        bear_trap = True
-
-    return bull_trap, bear_trap
-
-
-# =========================
-# MACHINE LEARNING SIMPLE
-# =========================
-
-def modelo_ml():
-
-    v = velas(300)
-
-    closes = [x[4] for x in v]
-
-    cambios = []
+    cambios=[]
 
     for i in range(1,len(closes)):
+        cambios.append(closes[i]-closes[i-1])
 
-        cambios.append(closes[i] - closes[i-1])
+    media=statistics.mean(cambios)
 
-    media = statistics.mean(cambios)
+    dev=statistics.stdev(cambios)
 
-    desviacion = statistics.stdev(cambios)
+    ultimo=cambios[-1]
 
-    ultimo = cambios[-1]
+    z=(ultimo-media)/dev if dev!=0 else 0
 
-    z = (ultimo-media)/desviacion if desviacion != 0 else 0
+    prob_up=1/(1+math.exp(-z))
 
-    prob_up = 1/(1+math.exp(-z))
+    prob_down=1-prob_up
 
-    prob_down = 1-prob_up
+    if prob_up>0.6:
+        return "LONG",int(prob_up*100)
 
-    return int(prob_up*100), int(prob_down*100)
+    if prob_down>0.6:
+        return "SHORT",int(prob_down*100)
+
+    return "NEUTRAL",50
 
 
 # =========================
-# MOTOR DE DECISION
+# MAPA LIQUIDACIONES
+# =========================
+
+def mapa_liquidaciones():
+
+    v=velas(120)
+
+    highs=[x[2] for x in v]
+    lows=[x[3] for x in v]
+
+    maximo=max(highs)
+    minimo=min(lows)
+
+    rango=maximo-minimo
+
+    zona_shorts=maximo+rango*0.25
+    zona_longs=minimo-rango*0.25
+
+    return zona_shorts,zona_longs
+
+
+# =========================
+# RANDOM FOREST SIMPLE
 # =========================
 
 def decision():
 
-    c1,c5 = momentum()
+    votos_long=0
+    votos_short=0
 
-    presion = orderbook()
+    m1=modelo_momentum()
+    m2=modelo_orderbook()
+    m3=modelo_liquidez()
+    m4,prob=modelo_estadistico()
 
-    inst = volumen_institucional()
+    modelos=[m1,m2,m3,m4]
 
-    absorb = absorcion()
+    for m in modelos:
 
-    bull,bear = manipulacion()
+        if m=="LONG":
+            votos_long+=1
 
-    prob_up,prob_down = modelo_ml()
+        if m=="SHORT":
+            votos_short+=1
 
-    score = 0
+    if votos_long>=3:
+        señal="LONG FUERTE"
 
-    if c1 > 0:
-        score += 1
+    elif votos_short>=3:
+        señal="SHORT FUERTE"
 
-    if c5 > 0:
-        score += 1
+    else:
+        señal="SIN SEÑAL"
 
-    if presion == "COMPRADORES":
-        score += 1
-
-    if inst:
-        score += 1
-
-    if absorb:
-        score += 1
-
-    if prob_up > prob_down:
-        score += 1
-
-    if bull:
-        score -= 2
-
-    if bear:
-        score += 2
-
-    if score >= 5:
-        return "ENTRADA LONG"
-
-    if score <= 1:
-        return "ENTRADA SHORT"
-
-    return "SIN SEÑAL"
+    return señal,prob
 
 
 # =========================
@@ -301,57 +244,34 @@ def decision():
 
 def reporte():
 
-    precio,tendencia = contexto()
+    precio,tendencia=contexto()
 
-    presion = orderbook()
+    señal,prob=decision()
 
-    sw = sweep()
+    zona_shorts,zona_longs=mapa_liquidaciones()
 
-    zona_alta,zona_baja = zonas_institucionales()
+    msg=f"""
 
-    inst = volumen_institucional()
-
-    absorb = absorcion()
-
-    bull,bear = manipulacion()
-
-    prob_up,prob_down = modelo_ml()
-
-    señal = decision()
-
-    msg = f"""
-
-BTC QUANT RADAR
+BTC QUANT ENGINE
 
 Precio: {precio}
 
-Tendencia 2H: {tendencia}
+Tendencia: {tendencia}
 
 SEÑAL: {señal}
 
-Prob subida: {prob_up}%
-Prob bajada: {prob_down}%
+Probabilidad modelo: {prob}%
 
-Presión mercado: {presion}
+Zona liquidación shorts: {zona_shorts}
 
-Sweep liquidez: {sw}
-
-Volumen institucional: {inst}
-
-Absorción: {absorb}
-
-Bull trap: {bull}
-Bear trap: {bear}
-
-Zona institucional alta: {zona_alta}
-Zona institucional baja: {zona_baja}
+Zona liquidación longs: {zona_longs}
 
 """
 
     enviar(msg)
 
 
-print("BOT CUANTITATIVO ACTIVO")
+print("BOT CUANTITATIVO INICIADO")
 
 while True:
 
@@ -364,5 +284,4 @@ while True:
     except Exception as e:
 
         print(e)
-
         time.sleep(30)
