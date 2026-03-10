@@ -4,13 +4,19 @@ import time
 import statistics
 import math
 
+# =========================
+# CONFIG
+# =========================
+
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 
-TELEGRAM_TOKEN = "TU_TOKEN"
-TELEGRAM_CHAT_ID = "TU_CHAT_ID"
+TELEGRAM_TOKEN = "TU_TOKEN_AQUI"
+TELEGRAM_CHAT_ID = "TU_CHAT_ID_AQUI"
 
-exchange = ccxt.binance({"enableRateLimit": True})
+exchange = ccxt.binance({
+    "enableRateLimit": True
+})
 
 # =========================
 # TELEGRAM
@@ -18,15 +24,15 @@ exchange = ccxt.binance({"enableRateLimit": True})
 
 def enviar(msg):
 
-    url=f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    data={
-        "chat_id":TELEGRAM_CHAT_ID,
-        "text":msg
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": msg
     }
 
     try:
-        requests.post(url,data=data)
+        requests.post(url, data=data)
     except:
         pass
 
@@ -37,74 +43,99 @@ def enviar(msg):
 
 def velas(n):
 
-    return exchange.fetch_ohlcv(SYMBOL,TIMEFRAME,limit=n)
+    return exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=n)
 
 
 # =========================
-# CONTEXTO
+# CONTEXTO 2 HORAS
 # =========================
 
 def contexto():
 
-    v=velas(120)
+    v = velas(120)
 
-    closes=[x[4] for x in v]
+    closes = [x[4] for x in v]
 
-    precio=closes[-1]
+    precio = closes[-1]
 
-    media=statistics.mean(closes)
+    media = statistics.mean(closes)
 
-    if precio>media:
-        tendencia="ALCISTA"
-    elif precio<media:
-        tendencia="BAJISTA"
+    if precio > media:
+        tendencia = "ALCISTA"
+
+    elif precio < media:
+        tendencia = "BAJISTA"
+
     else:
-        tendencia="NEUTRAL"
+        tendencia = "NEUTRAL"
 
-    return precio,tendencia
+    return precio, tendencia
 
 
 # =========================
-# MOMENTUM MODEL
+# MOMENTUM
 # =========================
 
 def modelo_momentum():
 
-    v=velas(6)
+    v = velas(6)
 
-    c1=v[-1][4]-v[-2][4]
-    c5=v[-1][4]-v[0][4]
+    c1 = v[-1][4] - v[-2][4]
+    c5 = v[-1][4] - v[0][4]
 
-    if c1>0 and c5>0:
+    if c1 > 0 and c5 > 0:
         return "LONG"
 
-    if c1<0 and c5<0:
+    if c1 < 0 and c5 < 0:
         return "SHORT"
 
     return "NEUTRAL"
 
 
 # =========================
-# ORDERBOOK MODEL
+# ORDERBOOK
 # =========================
 
 def modelo_orderbook():
 
-    book=exchange.fetch_order_book(SYMBOL,limit=100)
+    book = exchange.fetch_order_book(SYMBOL, limit=100)
 
-    bids=book["bids"]
-    asks=book["asks"]
+    bids = book["bids"]
+    asks = book["asks"]
 
-    vol_bids=sum([b[1] for b in bids])
-    vol_asks=sum([a[1] for a in asks])
+    vol_bids = sum([b[1] for b in bids])
+    vol_asks = sum([a[1] for a in asks])
 
-    if vol_bids>vol_asks:
+    if vol_bids > vol_asks:
         return "LONG"
 
-    if vol_asks>vol_bids:
+    if vol_asks > vol_bids:
         return "SHORT"
 
     return "NEUTRAL"
+
+
+# =========================
+# SPOOFING DETECTOR
+# =========================
+
+def spoofing():
+
+    book = exchange.fetch_order_book(SYMBOL, limit=50)
+
+    bids = book["bids"]
+    asks = book["asks"]
+
+    grandes_bids = [b for b in bids if b[1] > 20]
+    grandes_asks = [a for a in asks if a[1] > 20]
+
+    if len(grandes_bids) > 5:
+        return "SPOOFING_COMPRA"
+
+    if len(grandes_asks) > 5:
+        return "SPOOFING_VENTA"
+
+    return "NORMAL"
 
 
 # =========================
@@ -113,15 +144,15 @@ def modelo_orderbook():
 
 def sweep():
 
-    v=velas(15)
+    v = velas(15)
 
-    highs=[x[2] for x in v]
-    lows=[x[3] for x in v]
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
 
-    if highs[-1]>max(highs[:-1]):
+    if highs[-1] > max(highs[:-1]):
         return "SHORT_LIQUIDATED"
 
-    if lows[-1]<min(lows[:-1]):
+    if lows[-1] < min(lows[:-1]):
         return "LONG_LIQUIDATED"
 
     return "NONE"
@@ -133,12 +164,12 @@ def sweep():
 
 def modelo_liquidez():
 
-    s=sweep()
+    s = sweep()
 
-    if s=="SHORT_LIQUIDATED":
+    if s == "SHORT_LIQUIDATED":
         return "LONG"
 
-    if s=="LONG_LIQUIDATED":
+    if s == "LONG_LIQUIDATED":
         return "SHORT"
 
     return "NEUTRAL"
@@ -150,34 +181,32 @@ def modelo_liquidez():
 
 def modelo_estadistico():
 
-    v=velas(300)
+    v = velas(300)
 
-    closes=[x[4] for x in v]
+    closes = [x[4] for x in v]
 
-    cambios=[]
+    cambios = []
 
-    for i in range(1,len(closes)):
-        cambios.append(closes[i]-closes[i-1])
+    for i in range(1, len(closes)):
+        cambios.append(closes[i] - closes[i-1])
 
-    media=statistics.mean(cambios)
+    media = statistics.mean(cambios)
+    dev = statistics.stdev(cambios)
 
-    dev=statistics.stdev(cambios)
+    ultimo = cambios[-1]
 
-    ultimo=cambios[-1]
+    z = (ultimo - media) / dev if dev != 0 else 0
 
-    z=(ultimo-media)/dev if dev!=0 else 0
+    prob_up = 1 / (1 + math.exp(-z))
+    prob_down = 1 - prob_up
 
-    prob_up=1/(1+math.exp(-z))
+    if prob_up > 0.6:
+        return "LONG", int(prob_up * 100)
 
-    prob_down=1-prob_up
+    if prob_down > 0.6:
+        return "SHORT", int(prob_down * 100)
 
-    if prob_up>0.6:
-        return "LONG",int(prob_up*100)
-
-    if prob_down>0.6:
-        return "SHORT",int(prob_down*100)
-
-    return "NEUTRAL",50
+    return "NEUTRAL", 50
 
 
 # =========================
@@ -186,56 +215,83 @@ def modelo_estadistico():
 
 def mapa_liquidaciones():
 
-    v=velas(120)
+    v = velas(120)
 
-    highs=[x[2] for x in v]
-    lows=[x[3] for x in v]
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
 
-    maximo=max(highs)
-    minimo=min(lows)
+    maximo = max(highs)
+    minimo = min(lows)
 
-    rango=maximo-minimo
+    rango = maximo - minimo
 
-    zona_shorts=maximo+rango*0.25
-    zona_longs=minimo-rango*0.25
+    zona_shorts = maximo + rango * 0.25
+    zona_longs = minimo - rango * 0.25
 
-    return zona_shorts,zona_longs
+    return zona_shorts, zona_longs
 
 
 # =========================
-# RANDOM FOREST SIMPLE
+# CLUSTER LIQUIDACIONES
+# =========================
+
+def cluster_liquidaciones():
+
+    v = velas(200)
+
+    highs = [x[2] for x in v]
+    lows = [x[3] for x in v]
+
+    rango = max(highs) - min(lows)
+
+    cluster_up = max(highs) + rango * 0.15
+    cluster_down = min(lows) - rango * 0.15
+
+    return cluster_up, cluster_down
+
+
+# =========================
+# MOTOR DE DECISION
 # =========================
 
 def decision():
 
-    votos_long=0
-    votos_short=0
+    votos_long = 0
+    votos_short = 0
 
-    m1=modelo_momentum()
-    m2=modelo_orderbook()
-    m3=modelo_liquidez()
-    m4,prob=modelo_estadistico()
+    m1 = modelo_momentum()
+    m2 = modelo_orderbook()
+    m3 = modelo_liquidez()
+    m4, prob = modelo_estadistico()
 
-    modelos=[m1,m2,m3,m4]
+    spoof = spoofing()
+
+    modelos = [m1, m2, m3, m4]
 
     for m in modelos:
 
-        if m=="LONG":
-            votos_long+=1
+        if m == "LONG":
+            votos_long += 1
 
-        if m=="SHORT":
-            votos_short+=1
+        if m == "SHORT":
+            votos_short += 1
 
-    if votos_long>=3:
-        señal="LONG FUERTE"
+    if spoof == "SPOOFING_VENTA":
+        votos_long += 1
 
-    elif votos_short>=3:
-        señal="SHORT FUERTE"
+    if spoof == "SPOOFING_COMPRA":
+        votos_short += 1
+
+    if votos_long >= 3 and prob > 70:
+        señal = "LONG FUERTE"
+
+    elif votos_short >= 3 and prob > 70:
+        señal = "SHORT FUERTE"
 
     else:
-        señal="SIN SEÑAL"
+        señal = "SIN SEÑAL"
 
-    return señal,prob
+    return señal, prob
 
 
 # =========================
@@ -244,19 +300,21 @@ def decision():
 
 def reporte():
 
-    precio,tendencia=contexto()
+    precio, tendencia = contexto()
 
-    señal,prob=decision()
+    señal, prob = decision()
 
-    zona_shorts,zona_longs=mapa_liquidaciones()
+    zona_shorts, zona_longs = mapa_liquidaciones()
 
-    msg=f"""
+    cluster_up, cluster_down = cluster_liquidaciones()
+
+    msg = f"""
 
 BTC QUANT ENGINE
 
 Precio: {precio}
 
-Tendencia: {tendencia}
+Tendencia 2H: {tendencia}
 
 SEÑAL: {señal}
 
@@ -266,10 +324,20 @@ Zona liquidación shorts: {zona_shorts}
 
 Zona liquidación longs: {zona_longs}
 
+Cluster liquidación arriba: {cluster_up}
+
+Cluster liquidación abajo: {cluster_down}
+
 """
+
+    print(msg)
 
     enviar(msg)
 
+
+# =========================
+# LOOP
+# =========================
 
 print("BOT CUANTITATIVO INICIADO")
 
@@ -283,5 +351,6 @@ while True:
 
     except Exception as e:
 
-        print(e)
+        print("Error:", e)
+
         time.sleep(30)
