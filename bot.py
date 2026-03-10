@@ -3,41 +3,50 @@ import requests
 import time
 import statistics
 
+# =============================
 # CONFIGURACION
+# =============================
+
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 
-TELEGRAM_TOKEN = "TU_TOKEN_TELEGRAM"
+TELEGRAM_TOKEN = "TU_TOKEN"
 TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 
 exchange = ccxt.binance()
 
-# -----------------------------
+# =============================
 # TELEGRAM
-# -----------------------------
+# =============================
 
 def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensaje
-    }
+
     try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+        data = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": mensaje
+        }
+
         requests.post(url, data=data)
+
     except:
         pass
 
-# -----------------------------
-# DATOS DE MERCADO
-# -----------------------------
+# =============================
+# OBTENER VELAS
+# =============================
 
 def obtener_velas():
+
     velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=120)
+
     return velas
 
-# -----------------------------
-# ANALISIS CONTEXTO (2 HORAS)
-# -----------------------------
+# =============================
+# ANALISIS CONTEXTO 2 HORAS
+# =============================
 
 def analisis_contexto():
 
@@ -56,18 +65,20 @@ def analisis_contexto():
     volatilidad = statistics.stdev(closes)
     volumen_promedio = statistics.mean(volumes)
 
+    precio_actual = closes[-1]
+
     return {
         "max": max_2h,
         "min": min_2h,
         "rango": rango,
         "volumen": volumen_promedio,
         "volatilidad": volatilidad,
-        "precio": closes[-1]
+        "precio": precio_actual
     }
 
-# -----------------------------
-# ANALISIS TACTICO (1-5 MIN)
-# -----------------------------
+# =============================
+# ANALISIS TACTICO
+# =============================
 
 def analisis_tactico():
 
@@ -90,125 +101,191 @@ def analisis_tactico():
         "volumen": volumen_actual
     }
 
-# -----------------------------
-# ORDER BOOK
-# -----------------------------
+# =============================
+# ORDER BOOK PROFUNDO
+# =============================
 
 def analizar_orderbook():
 
-    orderbook = exchange.fetch_order_book(SYMBOL)
+    orderbook = exchange.fetch_order_book(SYMBOL, limit=50)
 
-    bids = orderbook["bids"][:10]
-    asks = orderbook["asks"][:10]
+    bids = orderbook["bids"]
+    asks = orderbook["asks"]
 
     volumen_bids = sum([b[1] for b in bids])
     volumen_asks = sum([a[1] for a in asks])
 
+    muro_compra = max(bids, key=lambda x: x[1])
+    muro_venta = max(asks, key=lambda x: x[1])
+
     return {
         "bids": volumen_bids,
-        "asks": volumen_asks
+        "asks": volumen_asks,
+        "muro_compra": muro_compra,
+        "muro_venta": muro_venta
     }
 
-# -----------------------------
-# OPEN INTEREST
-# -----------------------------
+# =============================
+# OPEN INTEREST ACTUAL
+# =============================
 
 def obtener_open_interest():
 
     try:
 
         url = "https://fapi.binance.com/fapi/v1/openInterest"
+
         params = {"symbol": "BTCUSDT"}
 
         r = requests.get(url, params=params)
+
         data = r.json()
 
         return float(data["openInterest"])
 
     except:
+
         return 0
 
-# -----------------------------
+# =============================
+# OPEN INTEREST HISTORICO
+# =============================
+
+def obtener_open_interest_historial():
+
+    try:
+
+        url = "https://fapi.binance.com/futures/data/openInterestHist"
+
+        params = {
+            "symbol": "BTCUSDT",
+            "period": "5m",
+            "limit": 2
+        }
+
+        r = requests.get(url, params=params)
+
+        data = r.json()
+
+        actual = float(data[-1]["sumOpenInterest"])
+        anterior = float(data[-2]["sumOpenInterest"])
+
+        cambio = actual - anterior
+
+        return actual, cambio
+
+    except:
+
+        return 0, 0
+
+# =============================
 # FUNDING RATE
-# -----------------------------
+# =============================
 
 def obtener_funding():
 
     try:
 
         url = "https://fapi.binance.com/fapi/v1/fundingRate"
-        params = {"symbol": "BTCUSDT", "limit": 1}
+
+        params = {
+            "symbol": "BTCUSDT",
+            "limit": 1
+        }
 
         r = requests.get(url, params=params)
+
         data = r.json()
 
         return float(data[0]["fundingRate"])
 
     except:
+
         return 0
 
-# -----------------------------
+# =============================
 # MOTOR DE DECISION
-# -----------------------------
+# =============================
 
 def generar_senal():
 
     contexto = analisis_contexto()
+
     tactico = analisis_tactico()
+
     orderbook = analizar_orderbook()
-    open_interest = obtener_open_interest()
+
+    oi_actual, oi_cambio = obtener_open_interest_historial()
+
     funding = obtener_funding()
 
     precio = contexto["precio"]
 
     cerca_min = precio <= contexto["min"] + contexto["rango"] * 0.2
+
     cerca_max = precio >= contexto["max"] - contexto["rango"] * 0.2
 
     presion_compra = orderbook["bids"] > orderbook["asks"]
+
     presion_venta = orderbook["asks"] > orderbook["bids"]
 
     momentum_up = tactico["cambio_1m"] > 0 and tactico["cambio_5m"] > 0
+
     momentum_down = tactico["cambio_1m"] < 0 and tactico["cambio_5m"] < 0
 
-    if cerca_min and presion_compra and momentum_up:
+    oi_subiendo = oi_cambio > 0
+
+    # LONG
+
+    if cerca_min and presion_compra and momentum_up and oi_subiendo:
 
         mensaje = f"""
 POSIBLE LONG BTC
 
 Precio: {precio}
 
-Contexto: cerca soporte 2h
+Contexto: soporte 2h
 Momentum: alcista
-OrderBook: compradores dominan
+Compradores dominan orderbook
 
-Open Interest: {open_interest}
+Open Interest: {oi_actual}
+Cambio OI: {oi_cambio}
+
 Funding: {funding}
+
+Muro compra: {orderbook['muro_compra']}
 """
 
         enviar_telegram(mensaje)
 
-    elif cerca_max and presion_venta and momentum_down:
+    # SHORT
+
+    elif cerca_max and presion_venta and momentum_down and oi_subiendo:
 
         mensaje = f"""
 POSIBLE SHORT BTC
 
 Precio: {precio}
 
-Contexto: cerca resistencia 2h
+Contexto: resistencia 2h
 Momentum: bajista
-OrderBook: vendedores dominan
+Vendedores dominan orderbook
 
-Open Interest: {open_interest}
+Open Interest: {oi_actual}
+Cambio OI: {oi_cambio}
+
 Funding: {funding}
+
+Muro venta: {orderbook['muro_venta']}
 """
 
         enviar_telegram(mensaje)
 
-# -----------------------------
+# =============================
 # LOOP PRINCIPAL
-# -----------------------------
+# =============================
 
-print("Bot iniciado...")
+print("BOT INICIADO")
 
 while True:
 
@@ -221,4 +298,5 @@ while True:
     except Exception as e:
 
         print("Error:", e)
+
         time.sleep(30)
