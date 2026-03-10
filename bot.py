@@ -2,6 +2,7 @@ import ccxt
 import requests
 import time
 import statistics
+import math
 
 # =========================
 # CONFIG
@@ -16,7 +17,6 @@ TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 exchange = ccxt.binance({
     "enableRateLimit": True
 })
-
 
 # =========================
 # TELEGRAM
@@ -106,33 +106,7 @@ def orderbook():
     if vol_asks > vol_bids:
         presion = "VENDEDORES"
 
-    return presion, bids, asks
-
-
-# =========================
-# BALLENAS
-# =========================
-
-def ballenas():
-
-    presion,bids,asks = orderbook()
-
-    whale_buy = None
-    whale_sell = None
-
-    for b in bids:
-
-        if b[1] > 40:
-            whale_buy = b
-            break
-
-    for a in asks:
-
-        if a[1] > 40:
-            whale_sell = a
-            break
-
-    return whale_buy, whale_sell
+    return presion
 
 
 # =========================
@@ -168,29 +142,6 @@ def open_interest():
 
 
 # =========================
-# FUNDING
-# =========================
-
-def funding():
-
-    try:
-
-        url = "https://fapi.binance.com/fapi/v1/fundingRate"
-
-        params = {"symbol":"BTCUSDT","limit":1}
-
-        r = requests.get(url, params=params)
-
-        data = r.json()
-
-        return float(data[0]["fundingRate"])
-
-    except:
-
-        return 0
-
-
-# =========================
 # SWEEP
 # =========================
 
@@ -202,12 +153,12 @@ def sweep():
     lows = [x[3] for x in v]
 
     if highs[-1] > max(highs[:-1]):
-        return "SWEEP SHORTS"
+        return "SHORT_LIQUIDITY"
 
     if lows[-1] < min(lows[:-1]):
-        return "SWEEP LONGS"
+        return "LONG_LIQUIDITY"
 
-    return "NINGUNO"
+    return "NONE"
 
 
 # =========================
@@ -226,112 +177,49 @@ def volumen_institucional():
 
 
 # =========================
-# ABSORCION
+# MACHINE LEARNING SIMPLE
 # =========================
 
-def absorcion():
+def modelo_ml():
 
-    v = velas(5)
-
-    precios = [x[4] for x in v]
-    vols = [x[5] for x in v]
-
-    cambio = abs(precios[-1] - precios[0])
-
-    vol = sum(vols)
-
-    if cambio < 10 and vol > statistics.mean(vols)*3:
-        return True
-
-    return False
-
-
-# =========================
-# TRAMPA DE LIQUIDEZ
-# =========================
-
-def trampa():
-
-    v = velas(6)
-
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
-    closes = [x[4] for x in v]
-
-    bull_trap = False
-    bear_trap = False
-
-    if highs[-1] > max(highs[:-1]) and closes[-1] < closes[-2]:
-        bull_trap = True
-
-    if lows[-1] < min(lows[:-1]) and closes[-1] > closes[-2]:
-        bear_trap = True
-
-    return bull_trap,bear_trap
-
-
-# =========================
-# MAPA LIQUIDACIONES
-# =========================
-
-def liquidaciones():
-
-    v = velas(80)
-
-    highs = [x[2] for x in v]
-    lows = [x[3] for x in v]
-
-    maximo = max(highs)
-    minimo = min(lows)
-
-    rango = maximo - minimo
-
-    liq_shorts = maximo + rango * 0.2
-    liq_longs = minimo - rango * 0.2
-
-    return liq_shorts, liq_longs
-
-
-# =========================
-# PROBABILIDAD
-# =========================
-
-def probabilidad():
-
-    v = velas(200)
+    v = velas(300)
 
     closes = [x[4] for x in v]
 
-    up = 0
-    down = 0
+    cambios = []
 
     for i in range(1,len(closes)):
 
-        if closes[i] > closes[i-1]:
-            up += 1
-        else:
-            down += 1
+        cambios.append(closes[i] - closes[i-1])
 
-    total = up + down
+    media = statistics.mean(cambios)
 
-    return int(up/total*100), int(down/total*100)
+    desviacion = statistics.stdev(cambios)
+
+    ultimo_cambio = cambios[-1]
+
+    z = (ultimo_cambio - media) / desviacion if desviacion != 0 else 0
+
+    prob_up = 1 / (1 + math.exp(-z))
+
+    prob_down = 1 - prob_up
+
+    return round(prob_up*100), round(prob_down*100)
 
 
 # =========================
-# MODELO PREDICTIVO
+# MOTOR PREDICCION
 # =========================
 
 def prediccion():
 
     c1,c5 = momentum()
 
-    prob_up,prob_down = probabilidad()
+    prob_up,prob_down = modelo_ml()
 
-    sw = sweep()
+    presion = orderbook()
 
     inst = volumen_institucional()
-
-    absorb = absorcion()
 
     score = 0
 
@@ -344,23 +232,17 @@ def prediccion():
     if prob_up > prob_down:
         score += 1
 
-    if sw == "SWEEP SHORTS":
+    if presion == "COMPRADORES":
         score += 1
 
     if inst:
         score += 1
 
-    if absorb:
-        score += 1
+    if score >= 4:
+        return "LONG SCALP"
 
-    if score >= 5:
-        return "FUERTE ALZA"
-
-    if score == 4:
-        return "ALZA PROBABLE"
-
-    if score <= 3:
-        return "BAJA PROBABLE"
+    if score <= 2:
+        return "SHORT SCALP"
 
     return "NEUTRAL"
 
@@ -373,31 +255,21 @@ def reporte():
 
     precio,tendencia = contexto()
 
-    presion,bids,asks = orderbook()
-
-    whale_buy,whale_sell = ballenas()
+    presion = orderbook()
 
     oi,oi_cambio = open_interest()
-
-    fund = funding()
 
     sw = sweep()
 
     inst = volumen_institucional()
 
-    absorb = absorcion()
-
-    bull,bear = trampa()
-
-    liq_s,liq_l = liquidaciones()
-
-    prob_up,prob_down = probabilidad()
+    prob_up,prob_down = modelo_ml()
 
     pred = prediccion()
 
     msg = f"""
 
-BTC FUTURES INTELLIGENCE
+BTC AI TRADING RADAR
 
 Precio: {precio}
 
@@ -405,30 +277,17 @@ Tendencia 2H: {tendencia}
 
 Predicción: {pred}
 
-Prob subida: {prob_up}%
-Prob bajada: {prob_down}%
+Prob subida (ML): {prob_up}%
+Prob bajada (ML): {prob_down}%
 
-Funding: {fund}
+Presión orderbook: {presion}
+
+Sweep liquidez: {sw}
 
 Open Interest: {oi}
 Cambio OI: {oi_cambio}
 
-Sweep: {sw}
-
 Volumen institucional: {inst}
-
-Absorción institucional: {absorb}
-
-Bull trap: {bull}
-Bear trap: {bear}
-
-Ballena compra: {whale_buy}
-Ballena venta: {whale_sell}
-
-Presión mercado: {presion}
-
-Zona liquidación shorts: {liq_s}
-Zona liquidación longs: {liq_l}
 
 """
 
@@ -439,7 +298,7 @@ Zona liquidación longs: {liq_l}
 # LOOP
 # =========================
 
-print("BOT CUANTITATIVO PRO INICIADO")
+print("BOT AI TRADING INICIADO")
 
 while True:
 
