@@ -1,246 +1,224 @@
 import ccxt
 import requests
 import time
-import pandas as pd
+import statistics
 
-TOKEN = "8603402885:AAFS9FWZvf-9syRTCnqLAEIwLALUGM9rVcc"
-CHAT_ID = "1252957275"
+# CONFIGURACION
+SYMBOL = "BTC/USDT"
+TIMEFRAME = "1m"
+
+TELEGRAM_TOKEN = "TU_TOKEN_TELEGRAM"
+TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 
 exchange = ccxt.binance()
 
-def enviar(msg):
+# -----------------------------
+# TELEGRAM
+# -----------------------------
 
-    url=f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+def enviar_telegram(mensaje):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": mensaje
+    }
+    try:
+        requests.post(url, data=data)
+    except:
+        pass
 
-    data={
-        "chat_id":CHAT_ID,
-        "text":msg
+# -----------------------------
+# DATOS DE MERCADO
+# -----------------------------
+
+def obtener_velas():
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=120)
+    return velas
+
+# -----------------------------
+# ANALISIS CONTEXTO (2 HORAS)
+# -----------------------------
+
+def analisis_contexto():
+
+    velas = obtener_velas()
+
+    highs = [v[2] for v in velas]
+    lows = [v[3] for v in velas]
+    volumes = [v[5] for v in velas]
+    closes = [v[4] for v in velas]
+
+    max_2h = max(highs)
+    min_2h = min(lows)
+
+    rango = max_2h - min_2h
+
+    volatilidad = statistics.stdev(closes)
+    volumen_promedio = statistics.mean(volumes)
+
+    return {
+        "max": max_2h,
+        "min": min_2h,
+        "rango": rango,
+        "volumen": volumen_promedio,
+        "volatilidad": volatilidad,
+        "precio": closes[-1]
     }
 
-    try:
-        requests.post(url,data=data)
-    except:
-        print("Error telegram")
+# -----------------------------
+# ANALISIS TACTICO (1-5 MIN)
+# -----------------------------
 
+def analisis_tactico():
 
-enviar("🚀 Bot institucional iniciado y monitoreando mercado")
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=5)
 
+    cierre_actual = velas[-1][4]
+    cierre_anterior = velas[-2][4]
 
-pares = [
-"BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT",
-"ADA/USDT","DOGE/USDT","AVAX/USDT","LINK/USDT","MATIC/USDT",
-"LTC/USDT","ATOM/USDT","UNI/USDT","APT/USDT","NEAR/USDT",
-"FTM/USDT","OP/USDT","ARB/USDT","INJ/USDT","SUI/USDT"
-]
+    cambio_1m = cierre_actual - cierre_anterior
 
+    cierre_5m = velas[0][4]
 
-def rsi(df,period=14):
+    cambio_5m = cierre_actual - cierre_5m
 
-    delta=df["close"].diff()
+    volumen_actual = velas[-1][5]
 
-    gain=delta.clip(lower=0)
-    loss=-delta.clip(upper=0)
+    return {
+        "cambio_1m": cambio_1m,
+        "cambio_5m": cambio_5m,
+        "volumen": volumen_actual
+    }
 
-    avg_gain=gain.rolling(period).mean()
-    avg_loss=loss.rolling(period).mean()
+# -----------------------------
+# ORDER BOOK
+# -----------------------------
 
-    rs=avg_gain/avg_loss
+def analizar_orderbook():
 
-    rsi=100-(100/(1+rs))
+    orderbook = exchange.fetch_order_book(SYMBOL)
 
-    return rsi
+    bids = orderbook["bids"][:10]
+    asks = orderbook["asks"][:10]
 
+    volumen_bids = sum([b[1] for b in bids])
+    volumen_asks = sum([a[1] for a in asks])
 
+    return {
+        "bids": volumen_bids,
+        "asks": volumen_asks
+    }
 
-def analizar(par):
+# -----------------------------
+# OPEN INTEREST
+# -----------------------------
 
-    candles=exchange.fetch_ohlcv(par,"1m",limit=120)
-
-    df=pd.DataFrame(
-        candles,
-        columns=["time","open","high","low","close","volume"]
-    )
-
-    df["RSI"]=rsi(df)
-
-    ultimo=df.iloc[-1]
-
-    max20=df["high"].tail(20).max()
-    min20=df["low"].tail(20).min()
-
-    rango=max20-min20
-
-    elasticidad=(rango/ultimo["close"])*100
-
-    vol_avg=df["volume"].tail(30).mean()
-    vol_now=ultimo["volume"]
-
-    volumen_fuerte=vol_now>vol_avg*2
-
-    squeeze=elasticidad<0.18
-
-
-    if ultimo["high"]>max20 and ultimo["close"]<max20:
-
-        enviar(f"""
-🎯 LIQUIDITY SWEEP SHORT
-
-{par}
-
-Precio {round(ultimo['close'],2)}
-RSI {round(ultimo['RSI'],2)}
-Elasticidad {round(elasticidad,3)}%
-""")
-
-
-    if ultimo["low"]<min20 and ultimo["close"]>min20:
-
-        enviar(f"""
-🎯 LIQUIDITY SWEEP LONG
-
-{par}
-
-Precio {round(ultimo['close'],2)}
-RSI {round(ultimo['RSI'],2)}
-Elasticidad {round(elasticidad,3)}%
-""")
-
-
-    if squeeze and volumen_fuerte:
-
-        enviar(f"""
-⚡ VOLATILITY SQUEEZE
-
-{par}
-
-Compresión detectada
-Movimiento fuerte posible
-
-Precio {round(ultimo['close'],2)}
-RSI {round(ultimo['RSI'],2)}
-Elasticidad {round(elasticidad,3)}%
-""")
-
-
-    if vol_now>vol_avg*3 and elasticidad<0.15:
-
-        enviar(f"""
-🐋 POSIBLE ENTRADA INSTITUCIONAL
-
-{par}
-
-Volumen extremo detectado
-
-Precio {round(ultimo['close'],2)}
-RSI {round(ultimo['RSI'],2)}
-Elasticidad {round(elasticidad,3)}%
-""")
-
-
-def libro_ordenes(par):
+def obtener_open_interest():
 
     try:
 
-        orderbook=exchange.fetch_order_book(par)
+        url = "https://fapi.binance.com/fapi/v1/openInterest"
+        params = {"symbol": "BTCUSDT"}
 
-        bids=orderbook["bids"][:10]
-        asks=orderbook["asks"][:10]
+        r = requests.get(url, params=params)
+        data = r.json()
 
-        bid_vol=sum([b[1] for b in bids])
-        ask_vol=sum([a[1] for a in asks])
-
-        if bid_vol>ask_vol*2:
-
-            enviar(f"""
-🐋 PARED DE COMPRA DETECTADA
-
-{par}
-
-Presión compradora fuerte
-Posible rebote
-""")
-
-
-        if ask_vol>bid_vol*2:
-
-            enviar(f"""
-🐋 PARED DE VENTA DETECTADA
-
-{par}
-
-Presión vendedora fuerte
-Posible caída
-""")
+        return float(data["openInterest"])
 
     except:
-        pass
+        return 0
 
+# -----------------------------
+# FUNDING RATE
+# -----------------------------
 
-
-def detectar_explosion(par):
+def obtener_funding():
 
     try:
 
-        candles=exchange.fetch_ohlcv(par,"1m",limit=60)
+        url = "https://fapi.binance.com/fapi/v1/fundingRate"
+        params = {"symbol": "BTCUSDT", "limit": 1}
 
-        df=pd.DataFrame(
-            candles,
-            columns=["time","open","high","low","close","volume"]
-        )
+        r = requests.get(url, params=params)
+        data = r.json()
 
-        cambio=(df["close"].iloc[-1]-df["close"].iloc[-5])/df["close"].iloc[-5]*100
-
-        vol_actual=df["volume"].iloc[-1]
-        vol_promedio=df["volume"].tail(20).mean()
-
-        rango=df["high"].tail(20).max()-df["low"].tail(20).min()
-        precio=df["close"].iloc[-1]
-
-        volatilidad=(rango/precio)*100
-
-        if vol_actual>vol_promedio*2 and volatilidad<0.25 and abs(cambio)>0.4:
-
-            enviar(f"""
-🚨 POSIBLE EXPLOSIÓN DE PRECIO
-
-{par}
-
-Cambio 5m: {round(cambio,2)} %
-
-Precio actual: {round(precio,2)}
-""")
+        return float(data[0]["fundingRate"])
 
     except:
-        pass
+        return 0
 
+# -----------------------------
+# MOTOR DE DECISION
+# -----------------------------
 
+def generar_senal():
 
-ultimo_reporte=time.time()
+    contexto = analisis_contexto()
+    tactico = analisis_tactico()
+    orderbook = analizar_orderbook()
+    open_interest = obtener_open_interest()
+    funding = obtener_funding()
 
+    precio = contexto["precio"]
+
+    cerca_min = precio <= contexto["min"] + contexto["rango"] * 0.2
+    cerca_max = precio >= contexto["max"] - contexto["rango"] * 0.2
+
+    presion_compra = orderbook["bids"] > orderbook["asks"]
+    presion_venta = orderbook["asks"] > orderbook["bids"]
+
+    momentum_up = tactico["cambio_1m"] > 0 and tactico["cambio_5m"] > 0
+    momentum_down = tactico["cambio_1m"] < 0 and tactico["cambio_5m"] < 0
+
+    if cerca_min and presion_compra and momentum_up:
+
+        mensaje = f"""
+POSIBLE LONG BTC
+
+Precio: {precio}
+
+Contexto: cerca soporte 2h
+Momentum: alcista
+OrderBook: compradores dominan
+
+Open Interest: {open_interest}
+Funding: {funding}
+"""
+
+        enviar_telegram(mensaje)
+
+    elif cerca_max and presion_venta and momentum_down:
+
+        mensaje = f"""
+POSIBLE SHORT BTC
+
+Precio: {precio}
+
+Contexto: cerca resistencia 2h
+Momentum: bajista
+OrderBook: vendedores dominan
+
+Open Interest: {open_interest}
+Funding: {funding}
+"""
+
+        enviar_telegram(mensaje)
+
+# -----------------------------
+# LOOP PRINCIPAL
+# -----------------------------
+
+print("Bot iniciado...")
 
 while True:
 
     try:
 
-        for par in pares:
+        generar_senal()
 
-            analizar(par)
-
-            libro_ordenes(par)
-
-            detectar_explosion(par)
-
-            time.sleep(1)
-
-
-        if time.time()-ultimo_reporte>3600:
-
-            enviar("📊 Bot activo y monitoreando mercado")
-
-            ultimo_reporte=time.time()
+        time.sleep(30)
 
     except Exception as e:
 
-        print(e)
-
-    time.sleep(15)
+        print("Error:", e)
+        time.sleep(30)
