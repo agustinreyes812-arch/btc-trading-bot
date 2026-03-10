@@ -22,6 +22,7 @@ exchange = ccxt.binance()
 def enviar_telegram(mensaje):
 
     try:
+
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
         data = {
@@ -34,23 +35,25 @@ def enviar_telegram(mensaje):
     except:
         pass
 
+
 # =============================
-# OBTENER VELAS
+# VELAS
 # =============================
 
-def obtener_velas():
+def obtener_velas(limite=200):
 
-    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=120)
+    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=limite)
 
     return velas
 
+
 # =============================
-# ANALISIS CONTEXTO (2H)
+# CONTEXTO 2H
 # =============================
 
 def analisis_contexto():
 
-    velas = obtener_velas()
+    velas = obtener_velas(120)
 
     highs = [v[2] for v in velas]
     lows = [v[3] for v in velas]
@@ -63,9 +66,10 @@ def analisis_contexto():
     rango = max_2h - min_2h
 
     volatilidad = statistics.stdev(closes)
+
     volumen_promedio = statistics.mean(volumes)
 
-    precio_actual = closes[-1]
+    precio = closes[-1]
 
     return {
         "max": max_2h,
@@ -73,25 +77,24 @@ def analisis_contexto():
         "rango": rango,
         "volumen": volumen_promedio,
         "volatilidad": volatilidad,
-        "precio": precio_actual
+        "precio": precio
     }
 
+
 # =============================
-# ANALISIS TACTICO
+# MOMENTUM
 # =============================
 
 def analisis_tactico():
 
-    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=5)
+    velas = obtener_velas(5)
 
     cierre_actual = velas[-1][4]
     cierre_anterior = velas[-2][4]
 
     cambio_1m = cierre_actual - cierre_anterior
 
-    cierre_5m = velas[0][4]
-
-    cambio_5m = cierre_actual - cierre_5m
+    cambio_5m = cierre_actual - velas[0][4]
 
     volumen_actual = velas[-1][5]
 
@@ -100,6 +103,7 @@ def analisis_tactico():
         "cambio_5m": cambio_5m,
         "volumen": volumen_actual
     }
+
 
 # =============================
 # ORDER BOOK
@@ -118,18 +122,14 @@ def analizar_orderbook():
     muro_compra = max(bids, key=lambda x: x[1])
     muro_venta = max(asks, key=lambda x: x[1])
 
-    return {
-        "bids": volumen_bids,
-        "asks": volumen_asks,
-        "muro_compra": muro_compra,
-        "muro_venta": muro_venta
-    }
+    return volumen_bids, volumen_asks, muro_compra, muro_venta
+
 
 # =============================
 # OPEN INTEREST
 # =============================
 
-def obtener_open_interest_historial():
+def obtener_open_interest():
 
     try:
 
@@ -156,6 +156,7 @@ def obtener_open_interest_historial():
 
         return 0, 0
 
+
 # =============================
 # FUNDING RATE
 # =============================
@@ -166,10 +167,7 @@ def obtener_funding():
 
         url = "https://fapi.binance.com/fapi/v1/fundingRate"
 
-        params = {
-            "symbol": "BTCUSDT",
-            "limit": 1
-        }
+        params = {"symbol": "BTCUSDT", "limit": 1}
 
         r = requests.get(url, params=params)
 
@@ -181,76 +179,78 @@ def obtener_funding():
 
         return 0
 
+
 # =============================
-# DETECTOR SWEEP
+# SWEEP
 # =============================
 
 def detectar_sweep():
 
-    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=10)
+    velas = obtener_velas(10)
 
-    lows = [v[3] for v in velas]
     highs = [v[2] for v in velas]
+    lows = [v[3] for v in velas]
 
-    ultimo_low = lows[-1]
     ultimo_high = highs[-1]
+    ultimo_low = lows[-1]
 
-    min_anterior = min(lows[:-1])
-    max_anterior = max(highs[:-1])
+    max_prev = max(highs[:-1])
+    min_prev = min(lows[:-1])
 
-    sweep_abajo = ultimo_low < min_anterior
-    sweep_arriba = ultimo_high > max_anterior
+    sweep_up = ultimo_high > max_prev
+    sweep_down = ultimo_low < min_prev
 
-    return sweep_abajo, sweep_arriba
+    return sweep_up, sweep_down
+
 
 # =============================
-# DETECTOR VOLUMEN ANOMALO
+# VOLUMEN ANOMALO
 # =============================
 
-def detectar_volumen_anomalo():
+def detectar_volumen():
 
-    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=30)
+    velas = obtener_velas(30)
 
     volumenes = [v[5] for v in velas]
 
-    volumen_actual = volumenes[-1]
+    promedio = statistics.mean(volumenes[:-1])
 
-    volumen_promedio = sum(volumenes[:-1]) / (len(volumenes) - 1)
+    actual = volumenes[-1]
 
-    return volumen_actual > volumen_promedio * 2
+    return actual > promedio * 2
+
 
 # =============================
-# DETECTOR SQUEEZE
+# SQUEEZE
 # =============================
 
 def detectar_squeeze():
 
-    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=3)
+    velas = obtener_velas(3)
 
     precio_actual = velas[-1][4]
     precio_anterior = velas[-2][4]
 
+    oi_actual, oi_cambio = obtener_open_interest()
+
     movimiento = precio_actual - precio_anterior
 
-    oi_actual, oi_cambio = obtener_open_interest_historial()
-
     if movimiento > 0 and oi_cambio < 0:
-
         return "SHORT SQUEEZE"
 
     if movimiento < 0 and oi_cambio < 0:
-
         return "LONG SQUEEZE"
 
-    return "NONE"
+    return "NINGUNO"
+
 
 # =============================
-# ZONAS DE LIQUIDACION
+# ZONAS LIQUIDACION
 # =============================
 
-def detectar_zonas_liquidacion():
+def zonas_liquidacion():
 
-    velas = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=50)
+    velas = obtener_velas(50)
 
     highs = [v[2] for v in velas]
     lows = [v[3] for v in velas]
@@ -260,115 +260,136 @@ def detectar_zonas_liquidacion():
 
     rango = maximo - minimo
 
-    zona_liq_shorts = maximo + rango * 0.15
-    zona_liq_longs = minimo - rango * 0.15
+    zona_short = maximo + rango * 0.15
+    zona_long = minimo - rango * 0.15
 
-    return zona_liq_shorts, zona_liq_longs
+    return zona_short, zona_long
 
-# =============================
-# MOTOR DE PROBABILIDAD
-# =============================
-
-def calcular_probabilidad(presion_compra, presion_venta, volumen_anomalo, sweep_abajo, sweep_arriba):
-
-    score_long = 0
-    score_short = 0
-
-    if presion_compra:
-        score_long += 1
-
-    if presion_venta:
-        score_short += 1
-
-    if volumen_anomalo:
-        score_long += 1
-        score_short += 1
-
-    if sweep_abajo:
-        score_long += 2
-
-    if sweep_arriba:
-        score_short += 2
-
-    total = score_long + score_short
-
-    if total == 0:
-        return 50, 50
-
-    prob_long = int((score_long / total) * 100)
-    prob_short = int((score_short / total) * 100)
-
-    return prob_long, prob_short
 
 # =============================
-# MOTOR DE DECISION
+# DIVERGENCIA PRECIO VS OI
 # =============================
 
-def generar_senal():
+def divergencia_precio_oi():
+
+    velas = obtener_velas(3)
+
+    precio_actual = velas[-1][4]
+    precio_anterior = velas[-2][4]
+
+    oi_actual, oi_cambio = obtener_open_interest()
+
+    movimiento = precio_actual - precio_anterior
+
+    if movimiento > 0 and oi_cambio < 0:
+        return "Subida por cierre de shorts"
+
+    if movimiento < 0 and oi_cambio < 0:
+        return "Caída por cierre de longs"
+
+    if movimiento > 0 and oi_cambio > 0:
+        return "Nuevos longs entrando"
+
+    if movimiento < 0 and oi_cambio > 0:
+        return "Nuevos shorts entrando"
+
+    return "Neutral"
+
+
+# =============================
+# MODELO ESTADISTICO
+# =============================
+
+def modelo_probabilidad():
+
+    velas = obtener_velas(200)
+
+    closes = [v[4] for v in velas]
+
+    subidas = 0
+    bajadas = 0
+
+    for i in range(1, len(closes)):
+
+        if closes[i] > closes[i-1]:
+            subidas += 1
+        else:
+            bajadas += 1
+
+    total = subidas + bajadas
+
+    prob_up = int((subidas / total) * 100)
+    prob_down = int((bajadas / total) * 100)
+
+    return prob_up, prob_down
+
+
+# =============================
+# MOTOR PRINCIPAL
+# =============================
+
+def generar_reporte():
 
     contexto = analisis_contexto()
 
     tactico = analisis_tactico()
 
-    orderbook = analizar_orderbook()
+    bids, asks, muro_compra, muro_venta = analizar_orderbook()
 
-    oi_actual, oi_cambio = obtener_open_interest_historial()
+    oi_actual, oi_cambio = obtener_open_interest()
 
     funding = obtener_funding()
 
-    sweep_abajo, sweep_arriba = detectar_sweep()
+    sweep_up, sweep_down = detectar_sweep()
 
-    volumen_anomalo = detectar_volumen_anomalo()
+    volumen = detectar_volumen()
 
     squeeze = detectar_squeeze()
 
-    zona_short, zona_long = detectar_zonas_liquidacion()
+    zona_short, zona_long = zonas_liquidacion()
+
+    divergencia = divergencia_precio_oi()
+
+    prob_up, prob_down = modelo_probabilidad()
 
     precio = contexto["precio"]
 
-    presion_compra = orderbook["bids"] > orderbook["asks"]
-
-    presion_venta = orderbook["asks"] > orderbook["bids"]
-
-    prob_long, prob_short = calcular_probabilidad(
-        presion_compra,
-        presion_venta,
-        volumen_anomalo,
-        sweep_abajo,
-        sweep_arriba
-    )
-
     mensaje = f"""
+
 BTC MARKET RADAR
 
 Precio actual: {precio}
 
-Probabilidad LONG: {prob_long}%
-Probabilidad SHORT: {prob_short}%
+Probabilidad subida: {prob_up}%
+Probabilidad bajada: {prob_down}%
 
-Funding Rate: {funding}
+Funding: {funding}
 
 Open Interest: {oi_actual}
 Cambio OI: {oi_cambio}
 
-Sweep abajo: {sweep_abajo}
-Sweep arriba: {sweep_arriba}
+Sweep arriba: {sweep_up}
+Sweep abajo: {sweep_down}
 
-Volumen institucional: {volumen_anomalo}
+Volumen institucional: {volumen}
 
-Squeeze detectado: {squeeze}
+Squeeze: {squeeze}
+
+Divergencia: {divergencia}
 
 Zona liquidacion shorts: {zona_short}
 Zona liquidacion longs: {zona_long}
 
-Muro compra: {orderbook['muro_compra']}
-Muro venta: {orderbook['muro_venta']}
+Muro compra: {muro_compra}
+Muro venta: {muro_venta}
+
 """
 
     enviar_telegram(mensaje)
 
+
 # =============================
-# LOOP PRINCIPAL
+# LOOP
 # =============================
 
 print("BOT INICIADO")
@@ -377,7 +398,7 @@ while True:
 
     try:
 
-        generar_senal()
+        generar_reporte()
 
         time.sleep(30)
 
