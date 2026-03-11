@@ -1,68 +1,29 @@
 import ccxt
 import os
 
-print("INICIANDO DIAGNOSTICO BINANCE...")
-
-# =========================
-# CARGAR VARIABLES
-# =========================
+print("INICIANDO PRUEBA BINANCE")
 
 API_KEY = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 
-print("Verificando variables...")
+print("API KEY:", API_KEY[:6] if API_KEY else "None")
 
-if API_KEY:
-    print("API KEY detectada:", API_KEY[:6] + "******")
-else:
-    print("ERROR: API KEY no encontrada")
+exchange = ccxt.binance({
+    "apiKey": API_KEY,
+    "secret": API_SECRET,
+    "enableRateLimit": True
+})
 
-if API_SECRET:
-    print("API SECRET detectada:", API_SECRET[:6] + "******")
-else:
-    print("ERROR: API SECRET no encontrada")
-
-# =========================
-# CONEXION BINANCE
-# =========================
+exchange.options["defaultType"] = "future"
 
 try:
-
-    exchange = ccxt.binance({
-        "apiKey": API_KEY,
-        "secret": API_SECRET,
-        "enableRateLimit": True
-    })
-
-    exchange.options["defaultType"] = "future"
-
-    print("Intentando conectar con Binance...")
 
     balance = exchange.fetch_balance()
 
     print("CONEXION EXITOSA")
-
-    if "USDT" in balance:
-        print("Balance USDT:", balance["USDT"])
+    print(balance["USDT"])
 
 except Exception as e:
 
-    print("ERROR CONECTANDO A BINANCE:")
+    print("ERROR:")
     print(e)
-
-# =========================
-# PROBAR MERCADO
-# =========================
-
-try:
-
-    ticker = exchange.fetch_ticker("BTC/USDT")
-
-    print("Precio BTC:", ticker["last"])
-
-except Exception as e:
-
-    print("ERROR OBTENIENDO PRECIO:")
-    print(e)
-
-print("DIAGNOSTICO TERMINADO")
