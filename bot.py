@@ -3,15 +3,17 @@ import requests
 import time
 import statistics
 import math
+import os
 
 # =========================
 # CONFIGURACION
 # =========================
 
-import os
-
 API_KEY = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
+
+if not API_KEY or not API_SECRET:
+    raise Exception("API KEYS NO CONFIGURADAS")
 
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
@@ -21,15 +23,24 @@ TRADE_SIZE = 0.001
 STOP_LOSS = 0.0015
 TAKE_PROFIT = 0.003
 
+LEVERAGE = 5
+
 TELEGRAM_TOKEN = "TU_TOKEN"
 TELEGRAM_CHAT_ID = "TU_CHAT_ID"
+
+# =========================
+# CONEXION BINANCE
+# =========================
 
 exchange = ccxt.binance({
     "apiKey": API_KEY,
     "secret": API_SECRET,
     "enableRateLimit": True,
-    "options": {"defaultType": "future"}
 })
+
+exchange.options["defaultType"] = "future"
+
+exchange.set_leverage(LEVERAGE, SYMBOL)
 
 # =========================
 # TELEGRAM
@@ -232,20 +243,34 @@ def estimar_movimiento():
 
     if porcentaje < 0.15:
         tipo = "SIN MOVIMIENTO"
-
     elif porcentaje < 0.5:
         tipo = "MICRO SCALP"
-
     elif porcentaje < 2:
         tipo = "SCALPING MEDIO"
-
     elif porcentaje < 5:
         tipo = "MOVIMIENTO FUERTE"
-
     else:
         tipo = "MOVIMIENTO GRANDE"
 
     return round(porcentaje, 2), tipo
+
+
+# =========================
+# VERIFICAR POSICION
+# =========================
+
+def hay_posicion():
+
+    posiciones = exchange.fetch_positions()
+
+    for p in posiciones:
+
+        if p["symbol"] == "BTC/USDT":
+
+            if float(p["contracts"]) != 0:
+                return True
+
+    return False
 
 
 # =========================
@@ -301,6 +326,24 @@ def abrir_long():
 
     exchange.create_market_buy_order(SYMBOL, TRADE_SIZE)
 
+    exchange.create_order(
+        SYMBOL,
+        "STOP_MARKET",
+        "sell",
+        TRADE_SIZE,
+        None,
+        {"stopPrice": sl}
+    )
+
+    exchange.create_order(
+        SYMBOL,
+        "TAKE_PROFIT_MARKET",
+        "sell",
+        TRADE_SIZE,
+        None,
+        {"stopPrice": tp}
+    )
+
     enviar(f"LONG ABIERTO\nPrecio: {p}\nSL: {sl}\nTP: {tp}")
 
 
@@ -312,6 +355,24 @@ def abrir_short():
     tp = p * (1 - TAKE_PROFIT)
 
     exchange.create_market_sell_order(SYMBOL, TRADE_SIZE)
+
+    exchange.create_order(
+        SYMBOL,
+        "STOP_MARKET",
+        "buy",
+        TRADE_SIZE,
+        None,
+        {"stopPrice": sl}
+    )
+
+    exchange.create_order(
+        SYMBOL,
+        "TAKE_PROFIT_MARKET",
+        "buy",
+        TRADE_SIZE,
+        None,
+        {"stopPrice": tp}
+    )
 
     enviar(f"SHORT ABIERTO\nPrecio: {p}\nSL: {sl}\nTP: {tp}")
 
@@ -329,7 +390,6 @@ def reporte():
     mov, tipo = estimar_movimiento()
 
     msg = f"""
-
 BTC QUANT ENGINE
 
 Precio: {precio_actual}
@@ -341,12 +401,9 @@ Movimiento esperado: {mov} %
 Tipo de oportunidad: {tipo}
 
 Señal: {señal}
-
 """
 
     print(msg)
-
-    enviar(msg)
 
     return señal
 
@@ -363,13 +420,13 @@ while True:
 
         señal = reporte()
 
-        if señal == "LONG":
+        if señal == "LONG" and not hay_posicion():
 
             abrir_long()
 
             time.sleep(120)
 
-        elif señal == "SHORT":
+        elif señal == "SHORT" and not hay_posicion():
 
             abrir_short()
 
@@ -380,5 +437,7 @@ while True:
     except Exception as e:
 
         print("Error:", e)
+
+        enviar(f"ERROR BOT: {e}")
 
         time.sleep(30)
