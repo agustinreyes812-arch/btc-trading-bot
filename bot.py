@@ -1,12 +1,13 @@
-import ccxt
 import os
+import ccxt
 
-print("INICIANDO PRUEBA BINANCE")
+print("INICIO DIAGNOSTICO")
 
 API_KEY = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 
-print("API KEY:", API_KEY[:6] if API_KEY else "None")
+print("API_KEY:", API_KEY)
+print("API_SECRET:", API_SECRET)
 
 exchange = ccxt.binance({
     "apiKey": API_KEY,
@@ -14,16 +15,11 @@ exchange = ccxt.binance({
     "enableRateLimit": True
 })
 
-exchange.options["defaultType"] = "future"
-
 try:
-
     balance = exchange.fetch_balance()
-
     print("CONEXION EXITOSA")
-    print(balance["USDT"])
+    print(balance)
 
 except Exception as e:
-
-    print("ERROR:")
+    print("ERROR BINANCE:")
     print(e)
