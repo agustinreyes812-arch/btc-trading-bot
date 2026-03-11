@@ -8,8 +8,10 @@ import math
 # CONFIGURACION
 # =========================
 
-API_KEY = "API_KEY"
-API_SECRET = "API_SECRET"
+import os
+
+API_KEY = os.getenv("BINANCE_API_KEY")
+API_SECRET = os.getenv("BINANCE_API_SECRET")
 
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
