@@ -8,8 +8,8 @@ import math
 # CONFIGURACION
 # =========================
 
-API_KEY = "TU_API_KEY"
-API_SECRET = "TU_SECRET"
+API_KEY = "9gTwgRQODeqxTT3fac9GDPcR4yc7B3VpRNClAoAWgRYmgAwtxFLsqUtCnh0u5mfJ"
+API_SECRET = "fj7vgPzV4GCy8ZjdaeZDxBPvM9ymESSAmcBaXJPlLP8zb4soBNWZ4WFQtodYePWd"
 
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
