@@ -1,54 +1,44 @@
-from flask import Flask, request
 import requests
-import os
+import time
+import pandas as pd
 
-app = Flask(__name__)
+SYMBOL = "BTCUSDT"
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+def get_price():
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
+    url = "https://api.binance.com/api/v3/ticker/price"
+    data = requests.get(url, params={"symbol":SYMBOL}).json()
 
-    requests.post(url, json=payload)
+    return float(data["price"])
 
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
+def momentum_check():
 
-    data = request.json
+    prices = []
 
-    symbol = data.get("symbol")
-    price = data.get("price")
-    signal = data.get("signal")
-    movement = data.get("movement")
+    for i in range(10):
+        prices.append(get_price())
+        time.sleep(5)
 
-    message = f"""
-BTC TRADING BOT
+    df = pd.Series(prices)
 
-Activo: {symbol}
-Precio: {price}
+    change = (df.iloc[-1] - df.iloc[0]) / df.iloc[0] * 100
 
-Señal: {signal}
-Movimiento esperado: {movement}%
-
-Tipo: MICRO SCALPING
-"""
-
-    send_telegram(message)
-
-    return {"status": "ok"}
+    return change
 
 
-@app.route("/")
-def home():
-    return "BOT ONLINE"
+def detect_move():
 
+    momentum = momentum_check()
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    if momentum > 0.15:
+        print("Possible LONG move incoming", momentum)
+
+    elif momentum < -0.15:
+        print("Possible SHORT move incoming", momentum)
+
+while True:
+
+    detect_move()
+
+    time.sleep(30)
