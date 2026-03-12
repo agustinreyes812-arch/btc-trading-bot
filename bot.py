@@ -1,14 +1,9 @@
-# BOT DE ALERTAS TRADINGVIEW → TELEGRAM
-# Funciona en Railway
-# No usa Binance, solo recibe señales y te avisa
-
 from flask import Flask, request
 import requests
 import os
 
 app = Flask(__name__)
 
-# Variables de entorno (configuradas en Railway)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -35,12 +30,12 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
-    data = request.json
+    data = request.json or {}
 
-    pair = data.get("pair", "N/A")
-    signal = data.get("signal", "N/A")
-    price = data.get("price", "N/A")
-    timeframe = data.get("timeframe", "N/A")
+    pair = data.get("pair", "Unknown")
+    signal = data.get("signal", "Unknown")
+    price = data.get("price", "Unknown")
+    timeframe = data.get("timeframe", "Unknown")
 
     message = f"""
 🚨 TRADING ALERT
